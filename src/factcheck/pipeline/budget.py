@@ -1,4 +1,4 @@
-"""Global spend ledger with a hard cap (default $10 API-equivalent for the whole project).
+"""Global spend ledger with a hard cap (default $100 API-equivalent for the whole project).
 
 Local context: price table, a cost estimator from the SDK's `usage` dict, and an append-only JSONL
 ledger that refuses new calls once the cap would be exceeded.

@@ -113,9 +113,9 @@ Grobe Werte pro Analyse (Bild ~1.200 Bild-Tokens, gecachter System-Prompt):
 Jede Analyse wird mit ihren echten Token-Zahlen in `budget_ledger.jsonl` eingetragen (Zweck `steno-fast` /
 `steno-deep`). Bremsen:
 
-- `STENO_DAILY_BUDGET_USD` (Standard 2 $) – Tageslimit für alle Steno-Analysen;
+- `STENO_DAILY_BUDGET_USD` (Standard 20 $) – Tageslimit für alle Steno-Analysen;
 - `STENO_DEEP_BUDGET_SHARE` (Standard 0,8) – die genaue Stufe hört bei 80 % auf, der Rest bleibt der schnellen;
-- `TOTAL_BUDGET_USD` – projektweiter harter Deckel (Standard 10 $; für regelmäßige Nutzung erhöhen);
+- `TOTAL_BUDGET_USD` – projektweiter harter Deckel über alle Tage (Standard 100 $);
 - `STENO_DEEP_AUTO=false` – genaue Prüfung nur noch per Knopf/Hotkey; `STENO_DEEP_MODEL=` (leer) schaltet sie ab.
 
 ## Einstellungen (`.env`)
@@ -133,7 +133,7 @@ Jede Analyse wird mit ihren echten Token-Zahlen in `budget_ledger.jsonl` eingetr
 | `STENO_CHANGE_THRESHOLD` | `0.004` | Anteil geänderter Pixel, ab dem ein Bild „neu“ ist |
 | `STENO_MAX_IMAGE_EDGE` / `STENO_MAX_IMAGE_TOKENS` | `1568` / `1568` | Bildgröße fürs Modell |
 | `STENO_FALLBACKS` | `true` | serverseitiger Refusal-Fallback (nur Opus/Sonnet) |
-| `STENO_DAILY_BUDGET_USD` / `STENO_DEEP_BUDGET_SHARE` | `2.0` / `0.8` | Kostenbremsen |
+| `STENO_DAILY_BUDGET_USD` / `STENO_DEEP_BUDGET_SHARE` | `20.0` / `0.8` | Kostenbremsen |
 | `STENO_HINT` | leer | Vorbelegung des Hinweisfelds |
 | `STENO_KNOWLEDGE_FILE` | leer | eigene Wissensdatei statt `knowledge/dek.md` |
 | `STENO_SAVE_FRAMES` | `false` | jedes gesendete Bild unter `logs/steno-frames/` speichern |

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     extract_timeout_s: float = 90.0
 
     # --- budget (API-equivalent USD) ---
-    total_budget_usd: float = 10.0
+    total_budget_usd: float = 100.0
     daily_app_budget_usd: float = 1.0
 
     # --- app behaviour ---
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     steno_change_threshold: float = 0.004
     steno_max_image_edge: int = 1568                   # pre-resize limits; 1568/1568 fits every model tier
     steno_max_image_tokens: int = 1568
-    steno_daily_budget_usd: float = 2.0                # all steno calls per day (API-equivalent USD)
+    steno_daily_budget_usd: float = 20.0               # all steno calls per day (API-equivalent USD)
     steno_deep_budget_share: float = 0.8               # deep stage stops at this share; the rest stays for fast
     steno_save_frames: bool = False                    # keep every analysed frame as PNG in logs/steno-frames/
     steno_hint: str = ""                               # default text for the hint field ("Finde den Fehler", ...)
