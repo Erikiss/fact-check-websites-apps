@@ -16,7 +16,9 @@ every new picture as soon as the lecturer stops drawing, streaming marks onto th
 model (Claude Opus 5.5) takes a second look once the picture stays still. Change detection runs locally, the
 overlay is hidden from screen captures on Windows, and every call goes through the project's spend ledger with a
 daily cap. Needs `ANTHROPIC_API_KEY` in `.env`; `uv run factcheck-steno --fake` runs the UI at $0.
-Guide (German): [`docs/steno-live.md`](docs/steno-live.md).
+Guide (German): [`docs/steno-live.md`](docs/steno-live.md). The same live analysis also runs on Android tablets as
+a standalone app (`android/`, guide: [`docs/steno-android.md`](docs/steno-android.md)); both share the prompt, the
+DEK knowledge and the output schema in `src/factcheck/steno/knowledge/`.
 
 **Status:** work in progress. See [`reports/literature-review.md`](reports/literature-review.md) for prior work. A full README
 (architecture, setup, results) follows as the components land.

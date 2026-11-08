@@ -151,8 +151,9 @@ Kursunterlagen an einen externen Dienst gegeben werden dürfen.
 - **macOS/Linux** laufen, aber das Overlay lässt sich dort nicht aus Bildschirmaufnahmen ausschließen: Es wird für
   den Moment der Aufnahme kurz ausgeblendet (Status „Overlay wird kurz ausgeblendet“), und Hotkeys gehen nur, wenn
   ein Fenster der App den Fokus hat. Unter Linux nur X11 (Wayland erlaubt keine Bildschirmaufnahme ohne Portal).
-- **Tablet**: noch nicht. Der naheliegende nächste Schritt wäre eine Browser-Variante (Bildschirmfreigabe +
-  Zeichenfläche); die Analyse-Teile (`imaging`, `frames`, `vision`, `models`) sind dafür bereits Qt-frei.
+- **Tablet (Android)**: eigene App mit derselben Analyse, siehe [`steno-android.md`](steno-android.md). Eine reine
+  Browser-Variante geht auf Tablets nicht: Chrome für Android (und Safari auf dem iPad) kann keine Bildschirme
+  aufnehmen.
 
 ## Fehlersuche
 
