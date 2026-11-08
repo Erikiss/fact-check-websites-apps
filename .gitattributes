@@ -3,3 +3,6 @@
 *.jpg binary
 *.pdf binary
 *.parquet binary
+*.jar binary
+*.keystore binary
+*.bat text eol=crlf

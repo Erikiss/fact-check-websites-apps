@@ -1,6 +1,6 @@
 """Data shapes of a live steno analysis: the JSON schema the model must follow and the cleaned-up records.
 
-Local context: `ANALYSIS_SCHEMA` (structured outputs; only features the API supports: no min/max constraints),
+Local context: `ANALYSIS_SCHEMA` (knowledge/analysis_schema.json; structured outputs, so no min/max constraints),
 `Mark` (one read word / suspected error, with its box in model-image pixels) and `StenoResult` (one finished
 analysis with timings and cost).
 Global context: vision.py turns streamed JSON items into Marks via `Mark.from_raw`; the overlay, the panel,
@@ -9,7 +9,9 @@ the PIL renderer and the CLI only ever see these models.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -17,35 +19,11 @@ from pydantic import BaseModel, Field
 MarkKind = Literal["word", "error", "note"]
 Stage = Literal["fast", "deep"]
 
-# Property order = generation order: locate first, then read, then judge (a cheap "look before you judge").
-ITEM_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "box": {"type": "array", "items": {"type": "integer"},
-                "description": "[x1, y1, x2, y2] in pixels of the image, tight around the sign/word"},
-        "text": {"type": "string", "description": "longhand reading of what is actually written"},
-        "alternatives": {"type": "array", "items": {"type": "string"}},
-        "kind": {"type": "string", "enum": ["word", "error", "note"]},
-        "issue": {"type": "string"},
-        "intended": {"type": "string"},
-        "fix": {"type": "string"},
-        "spot": {"type": "array", "items": {"type": "integer"},
-                 "description": "[x, y] of the exact faulty stroke, or [] if none"},
-        "confidence": {"type": "number"},
-    },
-    "required": ["box", "text", "alternatives", "kind", "issue", "intended", "fix", "spot", "confidence"],
-    "additionalProperties": False,
-}
-
-ANALYSIS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "items": {"type": "array", "items": ITEM_SCHEMA},
-        "answer": {"type": "string"},
-    },
-    "required": ["items", "answer"],
-    "additionalProperties": False,
-}
+# Shared with the Android app (android/ bundles knowledge/ as assets). Item property order = generation order:
+# locate first, then read, then judge (a cheap "look before you judge").
+ANALYSIS_SCHEMA: dict[str, Any] = json.loads(
+    (Path(__file__).with_name("knowledge") / "analysis_schema.json").read_text(encoding="utf-8"))
+ITEM_SCHEMA: dict[str, Any] = ANALYSIS_SCHEMA["properties"]["items"]["items"]
 
 
 def _clip(v: float, lo: float, hi: float) -> float:

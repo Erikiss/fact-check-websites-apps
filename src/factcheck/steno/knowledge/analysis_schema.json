@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "box": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "[x1, y1, x2, y2] in pixels of the image, tight around the sign/word"
+          },
+          "text": {
+            "type": "string",
+            "description": "longhand reading of what is actually written"
+          },
+          "alternatives": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "word",
+              "error",
+              "note"
+            ]
+          },
+          "issue": {
+            "type": "string"
+          },
+          "intended": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          },
+          "spot": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "[x, y] of the exact faulty stroke, or [] if none"
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "box",
+          "text",
+          "alternatives",
+          "kind",
+          "issue",
+          "intended",
+          "fix",
+          "spot",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "answer": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "items",
+    "answer"
+  ],
+  "additionalProperties": false
+}
