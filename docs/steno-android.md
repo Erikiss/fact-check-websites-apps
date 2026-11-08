@@ -78,6 +78,7 @@ getestet**. Wenn etwas hakt: in der App unter *Protokoll* → *Kopieren* und die
 | „… Tagesbudget … erreicht“ | Limit in der App erhöhen |
 | Live pausiert sich selbst | nach 3 fehlgeschlagenen Analysen in Folge; Grund steht in der Leiste und im Protokoll |
 | Bereich passt nach dem Drehen nicht | ⬚ Bereich neu wählen |
+| Nach dem Sperren des Bildschirms ist alles weg | Android beendet die Bildschirmaufnahme beim Sperren – in der App neu starten |
 
 ## Selbst bauen
 
