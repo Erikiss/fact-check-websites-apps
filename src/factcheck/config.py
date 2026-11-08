@@ -55,6 +55,38 @@ class Settings(BaseSettings):
     max_auto_checks_per_batch: int = 3
     app_concurrency: int = 3
 
+    # --- live steno mode (factcheck-steno; see docs/steno-live.md) ---
+    # Two stages: a fast model on every new picture, then a stronger model once the picture stays still.
+    steno_fast_model: str = "claude-haiku-5-5"
+    steno_fast_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    steno_fast_thinking: Literal["off", "adaptive"] = "off"
+    steno_fast_max_tokens: int = 2048
+    steno_deep_model: str = "claude-opus-5-5"          # empty = no deep stage
+    steno_deep_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    steno_deep_thinking: Literal["off", "adaptive"] = "adaptive"
+    steno_deep_max_tokens: int = 8000
+    steno_deep_auto: bool = True                       # false = deep stage only on button/hotkey
+    steno_fallbacks: bool = True                       # server-side refusal fallback where the model supports it
+    steno_fps: float = 4.0                             # capture ticks per second (change detection only)
+    steno_settle_s: float = 0.45
+    steno_max_wait_s: float = 2.0
+    steno_min_interval_s: float = 0.8
+    steno_deep_after_s: float = 2.5
+    steno_change_threshold: float = 0.004
+    steno_max_image_edge: int = 1568                   # pre-resize limits; 1568/1568 fits every model tier
+    steno_max_image_tokens: int = 1568
+    steno_daily_budget_usd: float = 2.0                # all steno calls per day (API-equivalent USD)
+    steno_deep_budget_share: float = 0.8               # deep stage stops at this share; the rest stays for fast
+    steno_save_frames: bool = False                    # keep every analysed frame as PNG in logs/steno-frames/
+    steno_hint: str = ""                               # default text for the hint field ("Finde den Fehler", ...)
+    steno_knowledge_file: str = ""                     # empty = bundled src/factcheck/steno/knowledge/dek.md
+    steno_fake: bool = False                           # true = $0 offline fake analyses (UI testing)
+    steno_hotkey_now: str = "ctrl+alt+s"
+    steno_hotkey_deep: str = "ctrl+alt+d"
+    steno_hotkey_region: str = "ctrl+alt+r"
+    steno_hotkey_overlay: str = "ctrl+alt+o"
+    steno_hotkey_pause: str = "ctrl+alt+p"
+
     # --- derived paths (not from .env) ---
     @cached_property
     def data_dir(self) -> Path:

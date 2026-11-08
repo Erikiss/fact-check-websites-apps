@@ -7,6 +7,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic>=2.6.0",
     "claude-agent-sdk>=0.2.177",
     "fastapi>=0.162.2",
     "httpx>=0.28.1",
@@ -33,6 +34,7 @@ dependencies = [
 [project.scripts]
 factcheck = "factcheck.app:main"
 factcheck-cli = "factcheck.cli:main"
+factcheck-steno = "factcheck.steno.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
