@@ -20,6 +20,9 @@ from typing import Any
 # Our live smoke test matched the SDK's total_cost_usd exactly with these numbers (see reports/literature-review.md).
 PRICES_PER_MTOK: dict[str, dict[str, float]] = {
     "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_write_5m": 0.125, "cache_write_1h": 0.20, "cache_read": 0.01},
+    # Used by the live steno mode (steno/vision.py); same pricing page, cache writes 1.25x (5 min) / 2x (1 h) of input.
+    "claude-sonnet-5-5": {"input": 2.00, "output": 10.00, "cache_write_5m": 2.50, "cache_write_1h": 4.00, "cache_read": 0.20},
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00, "cache_write_5m": 5.00, "cache_write_1h": 8.00, "cache_read": 0.20},
 }
 WEB_SEARCH_USD = 0.01        # $10 per 1,000 searches (same pricing page)
 
@@ -58,19 +61,46 @@ class BudgetLedger:
         self.daily_app_cap = daily_app_cap_usd
         self._lock = threading.Lock()
         self._reserved = 0.0                           # worst-case cost of calls currently in flight
+        self._read_lock = threading.Lock()
+        self._cache: list[dict[str, Any]] = []         # rows already parsed (the file is append-only)
+        self._offset = 0                               # bytes of the file covered by _cache
 
     def _rows(self) -> list[dict[str, Any]]:
+        """All rows. Reads only what was appended since the last call (the live steno mode reserves per frame),
+        while still seeing rows written by other processes, as the full re-read did."""
         if not self.path.exists():
             return []
-        with self.path.open(encoding="utf-8") as fh:
-            return [json.loads(line) for line in fh if line.strip()]
+        with self._read_lock:
+            size = self.path.stat().st_size
+            if size < self._offset:                    # truncated or replaced: start over
+                self._cache, self._offset = [], 0
+            tail_row = None
+            if size > self._offset:
+                with self.path.open("rb") as fh:
+                    fh.seek(self._offset)
+                    data = fh.read(size - self._offset)
+                complete, newline, tail = data.rpartition(b"\n")
+                if newline:
+                    chunk = complete + newline
+                    self._cache.extend(json.loads(line) for line in chunk.decode("utf-8").splitlines() if line.strip())
+                    self._offset += len(chunk)
+                if tail.strip():                       # last line without a newline yet: count it, re-read later
+                    try:
+                        tail_row = json.loads(tail.decode("utf-8"))
+                    except ValueError:
+                        tail_row = None
+            return self._cache + [tail_row] if tail_row is not None else list(self._cache)
 
     def spent_total(self) -> float:
         return round(sum(r["cost_usd"] for r in self._rows()), 6)
 
-    def spent_today_app(self) -> float:
+    def spent_today(self, prefix: str) -> float:
+        """Spend recorded today for purposes starting with `prefix` (e.g. "app", "steno")."""
         today = date.today().isoformat()
-        return round(sum(r["cost_usd"] for r in self._rows() if r["ts"].startswith(today) and r["purpose"].startswith("app")), 6)
+        return round(sum(r["cost_usd"] for r in self._rows() if r["ts"].startswith(today) and r["purpose"].startswith(prefix)), 6)
+
+    def spent_today_app(self) -> float:
+        return self.spent_today("app")
 
     def remaining(self) -> float:
         return round(self.total_cap - self.spent_total() - self._reserved, 6)
