@@ -49,6 +49,7 @@ import io.github.erikiss.steno.core.StageConfig
 import io.github.erikiss.steno.core.StenoResult
 import io.github.erikiss.steno.core.Trigger
 import io.github.erikiss.steno.core.VisionBackend
+import io.github.erikiss.steno.core.isGeminiModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -242,8 +243,11 @@ class CaptureService : Service(), ControlsView.Actions {
 
     private fun setupEngine() {
         val s = settings
+        val isFastGemini = isGeminiModel(s.fastModel.trim())
+        val fastMaxTokens = if (isFastGemini || s.fastThinking == "adaptive") 8192L else 4096L
+        val fastTimeoutS = if (s.fastThinking == "adaptive" || isFastGemini) 90L else 45L
         val stages = buildMap {
-            put(Stage.FAST, StageConfig(Stage.FAST, s.fastModel.trim(), s.fastEffort, s.fastThinking, 4096, true, maxRetries = 0, timeoutS = 45))
+            put(Stage.FAST, StageConfig(Stage.FAST, s.fastModel.trim(), s.fastEffort, s.fastThinking, fastMaxTokens, true, maxRetries = 0, timeoutS = fastTimeoutS))
             if (s.deepModel.isNotBlank()) {
                 put(Stage.DEEP, StageConfig(Stage.DEEP, s.deepModel.trim(), s.deepEffort, "adaptive", 16000, true, maxRetries = 1, timeoutS = 180))
             }

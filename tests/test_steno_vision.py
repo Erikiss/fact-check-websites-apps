@@ -286,6 +286,11 @@ def test_gemini_request_shape(settings, ledger, image):
     schema = body["generationConfig"]["responseSchema"]
     assert "additionalProperties" not in schema
     assert "additionalProperties" not in schema["properties"]["items"]["items"]
+    assert body["generationConfig"]["thinkingConfig"]["thinkingBudget"] == 0
+
+    stage_neon = StageConfig("deep", "neon", "high", "adaptive", 16000)
+    body_neon = gv.build_request_body(image, stage_neon, hint="")
+    assert body_neon["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
 
 
 async def test_gemini_streams_marks_and_records_spend(settings, ledger, image):

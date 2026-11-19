@@ -473,6 +473,20 @@ class GeminiVision:
     def build_request_body(self, image: PreparedImage, stage: StageConfig, hint: str, context: str = "") -> dict[str, Any]:
         b64_img = base64.standard_b64encode(image.png).decode("ascii")
         user_text = build_user_text(image.width, image.height, hint, context)
+        norm = normalize_gemini_model(stage.model).lower()
+        is_gemini_4_or_3 = "gemini-4" in norm or "gemini-3" in norm
+        gen_config: dict[str, Any] = {
+            "responseMimeType": "application/json",
+            "responseSchema": self._schema,
+            "maxOutputTokens": stage.max_tokens,
+        }
+        if is_gemini_4_or_3:
+            level = "low" if stage.thinking == "off" else stage.effort.lower()
+            gen_config["thinkingConfig"] = {"thinkingLevel": level}
+        elif "2.5" in norm:
+            budget = 0 if stage.thinking == "off" else -1
+            gen_config["thinkingConfig"] = {"thinkingBudget": budget}
+
         return {
             "system_instruction": {
                 "parts": [{"text": self.system_prompt}],
@@ -493,11 +507,7 @@ class GeminiVision:
                     ],
                 }
             ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "responseSchema": self._schema,
-                "maxOutputTokens": stage.max_tokens,
-            },
+            "generationConfig": gen_config,
         }
 
     def _save_frame(self, run_id: str, image: PreparedImage) -> str | None:

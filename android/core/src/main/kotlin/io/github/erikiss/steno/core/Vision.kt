@@ -37,7 +37,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
@@ -468,6 +470,20 @@ class GeminiVision(
         genConfig.set<JsonNode>("responseSchema", schemaNode)
         genConfig.put("maxOutputTokens", stage.maxTokens)
 
+        val norm = normalizeGeminiModel(stage.model).lowercase()
+        val isGemini4or3 = norm.contains("gemini-4") || norm.contains("gemini-3")
+        if (isGemini4or3) {
+            val level = if (stage.thinking == "off") "low" else stage.effort.lowercase()
+            genConfig.putObject("thinkingConfig").put("thinkingLevel", level)
+        } else if (norm.contains("2.5")) {
+            val tc = genConfig.putObject("thinkingConfig")
+            if (stage.thinking == "off") {
+                tc.put("thinkingBudget", 0)
+            } else {
+                tc.put("thinkingBudget", -1)
+            }
+        }
+
         return root.toString()
     }
 
@@ -504,9 +520,11 @@ class GeminiVision(
         val request = reqBuilder.build()
         val client = client(stage.timeoutS)
 
+        var currentCall: okhttp3.Call? = null
         try {
             coroutineScope {
                 val call = client.newCall(request)
+                currentCall = call
                 val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
                     try { awaitCancellation() } finally { call.cancel() }
                 }
@@ -578,7 +596,17 @@ class GeminiVision(
             recordPartial(stage, image, parser, lastUsage, result)
             throw e
         } catch (e: Exception) {
-            result.error = "Gemini-Verbindungsfehler: ${e.message}".take(240)
+            if (currentCoroutineContext().job.isCancelled ||
+                currentCall?.isCanceled() == true ||
+                (e is java.io.IOException && (e.message?.contains("cancel", ignoreCase = true) == true || e.message?.contains("Socket closed", ignoreCase = true) == true))
+            ) {
+                result.cancelled = true
+                result.durationS = seconds()
+                recordPartial(stage, image, parser, lastUsage, result)
+                throw CancellationException("Gemini-Anfrage abgebrochen", e)
+            }
+            val msg = e.message ?: e::class.simpleName ?: "Verbindung getrennt"
+            result.error = "Gemini-Verbindungsfehler: $msg".take(240)
             log("${stage.stage.id}: ${result.error}")
         } finally {
             ledger.release(worst)

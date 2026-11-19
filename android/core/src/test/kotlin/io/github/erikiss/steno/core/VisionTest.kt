@@ -294,6 +294,10 @@ class VisionTest {
         val schema = req.path("generationConfig").path("responseSchema")
         assertTrue(schema.path("additionalProperties").isMissingNode)
         assertEquals(4096, req.path("generationConfig").path("maxOutputTokens").asInt())
+        assertEquals(0, req.path("generationConfig").path("thinkingConfig").path("thinkingBudget").asInt())
+
+        val reqNeon = Json.mapper.readTree(gv.buildRequestBody(image, StageConfig(Stage.DEEP, "neon", "high", "adaptive", 16000), ""))
+        assertEquals("high", reqNeon.path("generationConfig").path("thinkingConfig").path("thinkingLevel").asText())
     }
 
     @Test
