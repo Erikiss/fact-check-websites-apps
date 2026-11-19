@@ -231,11 +231,25 @@ class VisionTest {
         ex.sendResponseHeaders(200, 0)
         runCatching {
             ex.responseBody.use { out ->
-                fun send(data: String) { out.write("data: $data\n\n".toByteArray()); out.flush() }
-                send("""{"candidates":[{"content":{"parts":[{"thought":true,"text":"Denken..."}]}}]}""")
-                send("""{"candidates":[{"content":{"parts":[{"text":"{\"items\": "}]}}]}""")
-                send("""{"candidates":[{"content":{"parts":[{"text":${Json.mapper.writeValueAsString(itemsJson)}}]}}]}""")
-                send("""{"candidates":[{"content":{"parts":[{"text":", \"answer\": ${Json.mapper.writeValueAsString(answer)}}"}],"finishReason":"$finish"}],"usageMetadata":{"promptTokenCount":850,"candidatesTokenCount":90}}""")
+                fun sendPart(text: String, thought: Boolean = false, finishReason: String? = null, usage: Boolean = false) {
+                    val root = Json.mapper.createObjectNode()
+                    val cand = root.putArray("candidates").addObject()
+                    val part = cand.putObject("content").putArray("parts").addObject()
+                    if (thought) part.put("thought", true)
+                    part.put("text", text)
+                    if (finishReason != null) cand.put("finishReason", finishReason)
+                    if (usage) {
+                        val u = root.putObject("usageMetadata")
+                        u.put("promptTokenCount", 850)
+                        u.put("candidatesTokenCount", 90)
+                    }
+                    val line = "data: " + Json.mapper.writeValueAsString(root) + "\n\n"
+                    out.write(line.toByteArray())
+                    out.flush()
+                }
+                sendPart("Denken...", thought = true)
+                sendPart("""{"items": $itemsJson""")
+                sendPart(""", "answer": "$answer"}""", finishReason = finish, usage = true)
             }
         }
     }
