@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 
 import anthropic
+import httpx
 import httpx2
 import pytest
 from PIL import Image
@@ -16,7 +17,11 @@ from factcheck.steno.imaging import prepare_image
 from factcheck.steno.vision import (
     FALLBACK_BETA,
     AnthropicVision,
+    GeminiVision,
+    MultiVision,
     StageConfig,
+    is_gemini_model,
+    normalize_gemini_model,
     output_config,
     stages_from_settings,
     thinking_param,
@@ -242,3 +247,141 @@ async def test_deep_share_stops_deep_before_fast(settings, ledger, image):
     with pytest.raises(BudgetExceeded, match="Deep"):
         await vision.analyze(image, DEEP, frame_id=1)
     assert (await vision.analyze(image, FAST, frame_id=2)).error is None
+
+
+# --------------------------------------------------------------------------------------------------- gemini
+def test_is_gemini_model_detection():
+    assert is_gemini_model("gemini-2.5-flash")
+    assert is_gemini_model("models/gemini-2.5-pro")
+    assert is_gemini_model("google/gemini-2.0-flash")
+    assert is_gemini_model("neon")
+    assert is_gemini_model("argon")
+    assert is_gemini_model("gemini:my-custom-model")
+    assert not is_gemini_model("claude-sonnet-5-5")
+    assert not is_gemini_model("claude-opus-5-5")
+    assert normalize_gemini_model("gemini-2.5-flash") == "models/gemini-2.5-flash"
+    assert normalize_gemini_model("gemini:my-model") == "models/my-model"
+    assert normalize_gemini_model("models/gemini-1.5-pro") == "models/gemini-1.5-pro"
+
+
+def test_gemini_request_shape(settings, ledger, image):
+    settings.gemini_api_key = "test-gemini-key"
+    stage = StageConfig("fast", "gemini-2.5-flash", "low", "off", 4096)
+    gv = GeminiVision(settings, ledger)
+    body = gv.build_request_body(image, stage, hint="Finde Fehler", context="Vorher")
+    assert "system_instruction" in body
+    assert "Du bist ein" in body["system_instruction"]["parts"][0]["text"]
+    parts = body["contents"][0]["parts"]
+    assert parts[0]["inline_data"]["mime_type"] == "image/png"
+    assert "Finde Fehler" in parts[1]["text"]
+    assert "Vorher" in parts[1]["text"]
+    schema = body["generationConfig"]["responseSchema"]
+    assert "additionalProperties" not in schema
+    assert "additionalProperties" not in schema["properties"]["items"]["items"]
+
+
+async def test_gemini_streams_marks_and_records_spend(settings, ledger, image):
+    settings.gemini_api_key = "test-gemini-key"
+    stage = StageConfig("fast", "gemini-2.5-flash", "low", "off", 4096)
+
+    def sse_event(candidate_text: str = "", thought_text: str = "", usage: dict | None = None, finish: str | None = None):
+        parts = []
+        if thought_text:
+            parts.append({"thought": True, "text": thought_text})
+        if candidate_text:
+            parts.append({"text": candidate_text})
+        c: dict = {"content": {"parts": parts}}
+        if finish:
+            c["finishReason"] = finish
+        payload: dict = {"candidates": [c]}
+        if usage:
+            payload["usageMetadata"] = usage
+        return f"data: {json.dumps(payload)}\n\n".encode()
+
+    sse_data = [
+        sse_event(thought_text="Ich analysiere jetzt die Zeichen..."),
+        sse_event(candidate_text='{"items": [{"box": [10, 10, 60, 50], "strokes": "Kürzel und", '),
+        sse_event(candidate_text='"text": "und", "alternatives": [], "kind": "word", "confidence": 0.95}], '),
+        sse_event(candidate_text='"answer": "Alles richtig"}',
+                  usage={"promptTokenCount": 850, "candidatesTokenCount": 90, "cachedContentTokenCount": 0},
+                  finish="STOP"),
+    ]
+
+    async def mock_handler(request: httpx.Request):
+        assert request.headers.get("x-goog-api-key") == "test-gemini-key"
+        assert "models/gemini-2.5-flash" in str(request.url)
+        return httpx.Response(200, content=b"".join(sse_data), headers={"content-type": "text/event-stream"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+    gv = GeminiVision(settings, ledger, http_client=client)
+    seen = []
+    res = await gv.analyze(image, stage, frame_id=12, on_mark=seen.append)
+
+    assert len(seen) == 1
+    assert seen[0].text == "und"
+    assert seen[0].strokes == "Kürzel und"
+    assert res.answer == "Alles richtig"
+    assert res.error is None
+    assert res.stop_reason == "STOP"
+    assert res.usage["input_tokens"] == 850
+    assert res.usage["output_tokens"] == 90
+    rows = ledger._rows()
+    assert len(rows) == 1
+    assert rows[0]["purpose"] == "steno-fast"
+    assert rows[0]["model"] == "gemini-2.5-flash"
+    assert rows[0]["input_tokens"] == 850
+    assert rows[0]["output_tokens"] == 90
+
+
+async def test_gemini_error_responses(settings, ledger, image):
+    settings.gemini_api_key = "test-key"
+    stage = StageConfig("fast", "gemini-2.5-flash", "low", "off", 4096)
+
+    async def err_handler_401(request: httpx.Request):
+        return httpx.Response(401, json={"error": {"message": "API key not valid"}})
+
+    client_401 = httpx.AsyncClient(transport=httpx.MockTransport(err_handler_401))
+    gv_401 = GeminiVision(settings, ledger, http_client=client_401)
+    res_401 = await gv_401.analyze(image, stage, frame_id=1)
+    assert "ungültig" in res_401.error
+
+    async def err_handler_429(request: httpx.Request):
+        return httpx.Response(429, json={"error": {"message": "Resource exhausted"}})
+
+    client_429 = httpx.AsyncClient(transport=httpx.MockTransport(err_handler_429))
+    gv_429 = GeminiVision(settings, ledger, http_client=client_429)
+    res_429 = await gv_429.analyze(image, stage, frame_id=2)
+    assert "Rate-Limit" in res_429.error
+
+
+async def test_multi_vision_routing(settings, ledger, image):
+    fast_claude = StageConfig("fast", "claude-sonnet-5-5", "low", "off", 4096)
+    fast_gemini = StageConfig("fast", "gemini-2.5-flash", "low", "off", 4096)
+    deep_neon = StageConfig("deep", "neon", "low", "off", 8000)
+
+    class MockBackend:
+        def __init__(self, name):
+            self.name = name
+            self.calls = []
+
+        async def analyze(self, img, stage, *, frame_id, hint="", context="", on_mark=None):
+            self.calls.append(stage.model)
+            from factcheck.steno.models import StenoResult
+            return StenoResult(frame_id=frame_id, stage=stage.stage, model=stage.model,
+                               image_width=img.width, image_height=img.height, image_tokens=img.tokens)
+
+    anthropic_mock = MockBackend("anthropic")
+    gemini_mock = MockBackend("gemini")
+    multi = MultiVision(settings, ledger, anthropic_backend=anthropic_mock, gemini_backend=gemini_mock)
+
+    await multi.analyze(image, fast_claude, frame_id=1)
+    assert anthropic_mock.calls == ["claude-sonnet-5-5"]
+    assert gemini_mock.calls == []
+
+    await multi.analyze(image, fast_gemini, frame_id=2)
+    assert anthropic_mock.calls == ["claude-sonnet-5-5"]
+    assert gemini_mock.calls == ["gemini-2.5-flash"]
+
+    await multi.analyze(image, deep_neon, frame_id=3)
+    assert gemini_mock.calls == ["gemini-2.5-flash", "neon"]
+

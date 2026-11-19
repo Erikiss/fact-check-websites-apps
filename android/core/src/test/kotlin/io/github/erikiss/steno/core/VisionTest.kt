@@ -217,4 +217,121 @@ class VisionTest {
             assertTrue(requests.isEmpty())
         }
     }
+
+    private fun geminiVision(apiKey: String = "AIzaSyTest") = GeminiVision(
+        apiKey,
+        "SYSTEM PROMPT",
+        javaClass.classLoader.getResource("analysis_schema.json")!!.readText(),
+        ledger,
+        baseUrl = "http://127.0.0.1:${server.address.port}",
+    )
+
+    private fun geminiSse(itemsJson: String, answer: String, finish: String = "STOP"): (HttpExchange) -> Unit = { ex ->
+        ex.responseHeaders.add("Content-Type", "text/event-stream")
+        ex.sendResponseHeaders(200, 0)
+        runCatching {
+            ex.responseBody.use { out ->
+                fun send(data: String) { out.write("data: $data\n\n".toByteArray()); out.flush() }
+                send("""{"candidates":[{"content":{"parts":[{"thought":true,"text":"Denken..."}]}}]}""")
+                send("""{"candidates":[{"content":{"parts":[{"text":"{\"items\": "}]}}]}""")
+                send("""{"candidates":[{"content":{"parts":[{"text":${Json.mapper.writeValueAsString(itemsJson)}}]}}]}""")
+                send("""{"candidates":[{"content":{"parts":[{"text":", \"answer\": ${Json.mapper.writeValueAsString(answer)}}"}],"finishReason":"$finish"}],"usageMetadata":{"promptTokenCount":850,"candidatesTokenCount":90}}""")
+            }
+        }
+    }
+
+    @Test
+    fun geminiModelDetectionAndNormalization() {
+        assertTrue(isGeminiModel("gemini-2.5-flash"))
+        assertTrue(isGeminiModel("models/gemini-2.5-pro"))
+        assertTrue(isGeminiModel("google/gemini-2.0-flash"))
+        assertTrue(isGeminiModel("neon"))
+        assertTrue(isGeminiModel("argon"))
+        assertTrue(isGeminiModel("gemini:custom-model"))
+        assertFalse(isGeminiModel("claude-sonnet-5-5"))
+        assertFalse(isGeminiModel("claude-opus-5-5"))
+        assertEquals("models/gemini-2.5-flash", normalizeGeminiModel("gemini-2.5-flash"))
+        assertEquals("models/my-model", normalizeGeminiModel("gemini:my-model"))
+    }
+
+    @Test
+    fun geminiRequestShape() {
+        val gv = geminiVision()
+        responders.add(geminiSse("[]", "Kein Text"))
+        val fastGemini = StageConfig(Stage.FAST, "gemini-2.5-flash", "low", "off", 4096)
+        runBlocking {
+            gv.analyze(image, fastGemini, 1, "Finde den Fehler", "Vorheriger Satz") {}
+        }
+        val (headers, req) = requests[0]
+        assertEquals("AIzaSyTest", headers["x-goog-api-key"]?.single())
+        assertEquals("SYSTEM PROMPT", req.path("system_instruction").path("parts")[0].path("text").asText())
+        val parts = req.path("contents")[0].path("parts")
+        assertEquals("image/png", parts[0].path("inline_data").path("mime_type").asText())
+        assertTrue(parts[1].path("text").asText().contains("Finde den Fehler"))
+        assertTrue(parts[1].path("text").asText().contains("Vorheriger Satz"))
+        val schema = req.path("generationConfig").path("responseSchema")
+        assertTrue(schema.path("additionalProperties").isMissingNode)
+        assertEquals(4096, req.path("generationConfig").path("maxOutputTokens").asInt())
+    }
+
+    @Test
+    fun geminiStreamsMarksAndRecordsSpend() {
+        val gv = geminiVision()
+        val items = """[{"box":[10,10,60,50],"strokes":"Kürzel und","text":"und","alternatives":[],"kind":"word","confidence":0.95}]"""
+        responders.add(geminiSse(items, "Alles richtig"))
+        val fastGemini = StageConfig(Stage.FAST, "gemini-2.5-flash", "low", "off", 4096)
+        val seen = ArrayList<Mark>()
+        val result = runBlocking {
+            gv.analyze(image, fastGemini, 12, "") { seen.add(it) }
+        }
+        assertEquals(listOf("und"), seen.map { it.text })
+        assertEquals("Alles richtig", result.answer)
+        assertNull(result.error)
+        assertEquals("STOP", result.stopReason)
+        assertEquals(850L, result.usage?.get("input_tokens"))
+        val rows = ledgerFile.readLines().map { Json.mapper.readTree(it) }
+        assertEquals(1, rows.size)
+        assertEquals("steno-fast", rows[0].path("purpose").asText())
+        assertEquals("gemini-2.5-flash", rows[0].path("model").asText())
+        assertEquals(850, rows[0].path("input_tokens").asInt())
+        assertEquals(90, rows[0].path("output_tokens").asInt())
+    }
+
+    @Test
+    fun geminiErrorHandling() {
+        val gv = geminiVision()
+        responders.add { ex ->
+            val body = """{"error":{"message":"API key not valid"}}""".toByteArray()
+            ex.sendResponseHeaders(401, body.size.toLong())
+            ex.responseBody.use { it.write(body) }
+        }
+        val fastGemini = StageConfig(Stage.FAST, "gemini-2.5-flash", "low", "off", 4096)
+        val res = runBlocking { gv.analyze(image, fastGemini, 1, "") {} }
+        assertTrue(res.error!!.contains("ungültig"))
+    }
+
+    @Test
+    fun multiVisionRoutesCorrectly() {
+        val calls = ArrayList<String>()
+        val mockClaude = object : VisionBackend {
+            override suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, context: String, onMark: (Mark) -> Unit): StenoResult {
+                calls.add(stage.model)
+                return StenoResult(frameId, stage.stage, stage.model, image.width, image.height, image.tokens)
+            }
+        }
+        val mockGemini = object : VisionBackend {
+            override suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, context: String, onMark: (Mark) -> Unit): StenoResult {
+                calls.add(stage.model)
+                return StenoResult(frameId, stage.stage, stage.model, image.width, image.height, image.tokens)
+            }
+        }
+        val multi = MultiVision(mockClaude, mockGemini)
+        runBlocking {
+            multi.analyze(image, StageConfig(Stage.FAST, "claude-sonnet-5-5"), 1, "") {}
+            multi.analyze(image, StageConfig(Stage.FAST, "gemini-2.5-flash"), 2, "") {}
+            multi.analyze(image, StageConfig(Stage.DEEP, "neon"), 3, "") {}
+        }
+        assertEquals(listOf("claude-sonnet-5-5", "gemini-2.5-flash", "neon"), calls)
+    }
 }
+

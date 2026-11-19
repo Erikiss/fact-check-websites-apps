@@ -26,6 +26,12 @@ import com.anthropic.models.messages.ThinkingConfigBetweenTools
 import com.anthropic.models.messages.ThinkingConfigDisabled
 import com.anthropic.models.messages.Usage
 import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.ArrayNode
+import com.fasterxml.jackson.databind.node.ObjectNode
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -372,3 +378,265 @@ class FakeVision(private val delayMs: Long = 150, private val boxFinder: (Prepar
         return result
     }
 }
+
+fun isGeminiModel(model: String): Boolean {
+    val m = model.trim().lowercase()
+    return m.startsWith("gemini") || m.startsWith("models/gemini") ||
+        m.startsWith("google") || m.startsWith("neon") || m.startsWith("argon") ||
+        m.startsWith("gemini:")
+}
+
+fun normalizeGeminiModel(model: String): String {
+    val m = model.trim().removePrefix("gemini:").removePrefix("google:")
+    return if (m.startsWith("models/")) m else "models/$m"
+}
+
+fun cleanSchemaForGemini(node: JsonNode): JsonNode {
+    if (node.isObject) {
+        val obj = node as ObjectNode
+        val copy = Json.mapper.createObjectNode()
+        obj.fieldNames().forEach { name ->
+            if (name != "additionalProperties") {
+                copy.set<JsonNode>(name, cleanSchemaForGemini(obj.get(name)))
+            }
+        }
+        return copy
+    } else if (node.isArray) {
+        val arr = node as ArrayNode
+        val copy = Json.mapper.createArrayNode()
+        arr.forEach { copy.add(cleanSchemaForGemini(it)) }
+        return copy
+    }
+    return node
+}
+
+/**
+ * One streamed Google AI Studio Gemini API call per frame via SSE:
+ * System instruction, user image + prompt, structured JSON output via responseSchema,
+ * marks streamed as they complete, usage tracked in the spend ledger.
+ */
+class GeminiVision(
+    private val apiKey: String,
+    private val systemPrompt: String,
+    schemaJson: String,
+    private val ledger: SpendLedger,
+    private val baseUrl: String = "https://generativelanguage.googleapis.com",
+    private val customClient: OkHttpClient? = null,
+    private val log: (String) -> Unit = {},
+) : VisionBackend {
+    private val schemaNode = cleanSchemaForGemini(Json.mapper.readTree(schemaJson))
+    private val systemTokens = systemPrompt.length / 3 + 50
+    private val clients = ConcurrentHashMap<Long, OkHttpClient>()
+
+    private fun client(timeoutS: Long): OkHttpClient = customClient ?: clients.getOrPut(timeoutS) {
+        OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .readTimeout(Duration.ofSeconds(timeoutS))
+            .build()
+    }
+
+    fun buildRequestBody(image: PreparedImage, stage: StageConfig, hint: String, context: String = ""): String {
+        val root = Json.mapper.createObjectNode()
+        root.putObject("system_instruction")
+            .putArray("parts")
+            .addObject()
+            .put("text", systemPrompt)
+
+        val parts = root.putArray("contents")
+            .addObject()
+            .put("role", "user")
+            .putArray("parts")
+
+        parts.addObject().putObject("inline_data")
+            .put("mime_type", "image/png")
+            .put("data", Base64.getEncoder().encodeToString(image.png))
+
+        parts.addObject().put("text", Prompts.buildUserText(image.width, image.height, hint, context))
+
+        val genConfig = root.putObject("generationConfig")
+        genConfig.put("responseMimeType", "application/json")
+        genConfig.set<JsonNode>("responseSchema", schemaNode)
+        genConfig.put("maxOutputTokens", stage.maxTokens)
+
+        return root.toString()
+    }
+
+    override suspend fun analyze(
+        image: PreparedImage,
+        stage: StageConfig,
+        frameId: Long,
+        hint: String,
+        context: String,
+        onMark: (Mark) -> Unit,
+    ): StenoResult {
+        val worst = Pricing.worstCase(stage.model, systemTokens + image.tokens + 200, stage.maxTokens)
+        ledger.reserve(worst, stage.stage)
+        val result = StenoResult(frameId, stage.stage, stage.model, image.width, image.height, image.tokens)
+        if (apiKey.isBlank() && customClient == null) {
+            ledger.release(worst)
+            result.error = "Keine Zugangsdaten: Gemini-API-Schlüssel in den Einstellungen eintragen"
+            return result
+        }
+
+        val parser = ItemStream()
+        val t0 = System.nanoTime()
+        fun seconds() = (System.nanoTime() - t0) / 1e9
+        var lastUsage = UsageNumbers(input = (systemTokens + image.tokens).toLong(), output = 0L)
+        var finalFinishReason = ""
+        var success = false
+
+        val modelPath = normalizeGeminiModel(stage.model)
+        val url = "${baseUrl.trimEnd('/')}/v1beta/$modelPath:streamGenerateContent?alt=sse"
+        val reqBody = buildRequestBody(image, stage, hint, context)
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        val reqBuilder = Request.Builder().url(url).post(reqBody)
+        if (apiKey.isNotBlank()) reqBuilder.addHeader("x-goog-api-key", apiKey)
+        val request = reqBuilder.build()
+        val client = client(stage.timeoutS)
+
+        try {
+            coroutineScope {
+                val call = client.newCall(request)
+                val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try { awaitCancellation() } finally { call.cancel() }
+                }
+                try {
+                    runInterruptible(Dispatchers.IO) {
+                        call.execute().use { response ->
+                            if (!response.isSuccessful) {
+                                val errBody = response.body?.string().orEmpty()
+                                result.error = when (response.code) {
+                                    401, 403 -> "Gemini-API-Schlüssel ungültig oder keine Berechtigung (in den Einstellungen prüfen)"
+                                    404 -> "Gemini-Modell nicht gefunden: '${stage.model}'"
+                                    429 -> "Gemini-Rate-Limit erreicht – der nächste Frame versucht es erneut"
+                                    else -> "Gemini-API-Fehler ${response.code}: ${errBody.take(180)}"
+                                }
+                                log("${stage.stage.id}: ${result.error}")
+                                return@use
+                            }
+                            val source = response.body?.source() ?: return@use
+                            while (!source.exhausted()) {
+                                val line = source.readUtf8Line() ?: break
+                                val trimmed = line.trim()
+                                if (!trimmed.startsWith("data:")) continue
+                                val data = trimmed.removePrefix("data:").trim()
+                                if (data.isEmpty() || data == "[DONE]") continue
+                                val chunk = runCatching { Json.mapper.readTree(data) }.getOrNull() ?: continue
+
+                                val candidates = chunk.path("candidates")
+                                if (candidates.isArray && candidates.size() > 0) {
+                                    val first = candidates[0]
+                                    val fr = first.path("finishReason").asText("")
+                                    if (fr.isNotEmpty()) finalFinishReason = fr
+                                    val parts = first.path("content").path("parts")
+                                    if (parts.isArray) {
+                                        for (part in parts) {
+                                            if (part.path("thought").asBoolean(false)) continue
+                                            val text = part.path("text").asText("")
+                                            if (text.isNotEmpty()) {
+                                                if (result.ttftS == null) result.ttftS = seconds()
+                                                for (node in parser.feed(text)) {
+                                                    val mark = Mark.fromJson(node, image.width, image.height) ?: continue
+                                                    if (result.firstMarkS == null) result.firstMarkS = seconds()
+                                                    result.marks.add(mark)
+                                                    onMark(mark)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                val usage = chunk.path("usageMetadata")
+                                if (!usage.isMissingNode) {
+                                    lastUsage = UsageNumbers(
+                                        input = usage.path("promptTokenCount").asLong(lastUsage.input),
+                                        output = usage.path("candidatesTokenCount").asLong(lastUsage.output),
+                                        cacheRead = usage.path("cachedContentTokenCount").asLong(0L)
+                                    )
+                                }
+                            }
+                            success = result.error == null
+                        }
+                    }
+                } finally {
+                    watcher.cancel()
+                }
+            }
+        } catch (e: CancellationException) {
+            result.cancelled = true
+            result.durationS = seconds()
+            recordPartial(stage, image, parser, lastUsage, result)
+            throw e
+        } catch (e: Exception) {
+            result.error = "Gemini-Verbindungsfehler: ${e.message}".take(240)
+            log("${stage.stage.id}: ${result.error}")
+        } finally {
+            ledger.release(worst)
+        }
+
+        result.durationS = seconds()
+        if (success) {
+            finish(result, finalFinishReason, parser, image)
+            result.costUsd = ledger.record(
+                stage.stage, stage.model, lastUsage,
+                mapOf("frame_id" to frameId, "served_by" to result.servedBy, "ttft_s" to result.ttftS,
+                    "duration_s" to result.durationS, "stop_reason" to result.stopReason)
+            )
+        } else if (parser.text.isNotEmpty()) {
+            recordPartial(stage, image, parser, lastUsage, result)
+        }
+        return result
+    }
+
+    private fun finish(result: StenoResult, finishReason: String, parser: ItemStream, image: PreparedImage) {
+        result.stopReason = finishReason.ifEmpty { "STOP" }
+        result.servedBy = result.model
+        if (finishReason == "SAFETY") {
+            result.error = "Modell hat die Analyse abgelehnt (SAFETY)"
+            result.marks.clear()
+            return
+        }
+        val data: JsonNode? = parser.final()
+        if (data != null) {
+            result.answer = data.path("answer").asText("").trim()
+            if (result.marks.isEmpty()) {
+                data.path("items").forEach { node -> Mark.fromJson(node, image.width, image.height)?.let(result.marks::add) }
+            }
+        }
+        if (finishReason == "MAX_TOKENS") result.error = "Antwort abgeschnitten (max. Tokens erhöhen)"
+    }
+
+    private fun recordPartial(stage: StageConfig, image: PreparedImage, parser: ItemStream, baseUsage: UsageNumbers, result: StenoResult) {
+        val usage = baseUsage.copy(
+            output = maxOf(baseUsage.output, (parser.text.length / 3).toLong()),
+        )
+        result.costUsd = ledger.record(
+            stage.stage, stage.model, usage,
+            mapOf("frame_id" to result.frameId, "partial" to true, "cancelled" to result.cancelled)
+        )
+    }
+}
+
+/** Routes stage analyses to GeminiVision or AnthropicVision depending on model name. */
+class MultiVision(
+    private val anthropic: VisionBackend?,
+    private val gemini: VisionBackend?,
+) : VisionBackend {
+    fun backendFor(model: String): VisionBackend {
+        return if (isGeminiModel(model)) {
+            gemini ?: anthropic ?: throw IllegalStateException("Kein Gemini-Backend konfiguriert (GEMINI_API_KEY fehlt)")
+        } else {
+            anthropic ?: gemini ?: throw IllegalStateException("Kein Anthropic-Backend konfiguriert (ANTHROPIC_API_KEY fehlt)")
+        }
+    }
+
+    override suspend fun analyze(
+        image: PreparedImage,
+        stage: StageConfig,
+        frameId: Long,
+        hint: String,
+        context: String,
+        onMark: (Mark) -> Unit,
+    ): StenoResult = backendFor(stage.model).analyze(image, stage, frameId, hint, context, onMark)
+}
+

@@ -24,8 +24,11 @@ Für Android 10 und neuer (z. B. Galaxy Tab S6 Lite).
 ## Einrichten (einmal)
 
 1. App **Steno-Live** öffnen.
-2. **Claude-API-Schlüssel** eintragen und *Einstellungen speichern*. Der Schlüssel wird mit einem Schlüssel aus dem
-   Android-Keystore verschlüsselt gespeichert und nur an `api.anthropic.com` gesendet.
+2. **API-Schlüssel** eintragen und *Einstellungen speichern*:
+   - **Claude-API-Schlüssel**: für Claude-Modelle (z. B. `claude-sonnet-5-5`, `claude-opus-5-5`).
+   - **Gemini-API-Schlüssel** (Google AI Studio): für Gemini-Modelle (z. B. `gemini-2.5-flash`, `gemini-2.5-pro`, `neon`, `argon`).
+   - Du kannst beide Schlüssel eintragen und beliebige Modelle für die schnelle und genaue Stufe mischen.
+   Schlüssel werden im Android-Keystore verschlüsselt gespeichert und verlassen das Gerät nur an die jeweilige offizielle API.
 3. **„Über anderen Apps einblenden“ erlauben** (der Knopf in der App führt direkt zur Einstellung).
 4. Optional: Hinweis ans Modell („Finde den Fehler“), **eigenes Kursmaterial** (z. B. eure Kürzelliste – wird dem
    DEK-Wissen angehängt), Tages- und Gesamtlimit (Standard 20 $ / 100 $).

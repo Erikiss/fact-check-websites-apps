@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     auth_mode: Literal["auto", "subscription", "api_key"] = "auto"
     anthropic_api_key: SecretStr | None = None
     anthropic_workspace_id: str | None = None          # documentation only; the SDK does not use it
+    gemini_api_key: SecretStr | None = None
 
     # --- model / agent ---
     model: str = "claude-haiku-5-5"

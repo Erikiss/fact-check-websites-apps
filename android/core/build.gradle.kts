@@ -18,6 +18,7 @@ sourceSets["test"].resources.srcDir("../../src/factcheck/steno/knowledge")
 
 dependencies {
     api("com.anthropic:anthropic-java:3.6.0")                       // official SDK (Kotlin uses the Java SDK)
+    api("com.squareup.okhttp3:okhttp:4.12.0")
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.19.4")
     testImplementation("junit:junit:4.13.2")

@@ -58,6 +58,12 @@ class StenoSettings(context: Context) {
 
     val hasApiKey: Boolean get() = apiKey.isNotBlank()
 
+    var geminiApiKey: String
+        get() = prefs.getString("gemini_api_key", null)?.let { KeyCrypto.decrypt(it) } ?: ""
+        set(value) = prefs.edit().putString("gemini_api_key", if (value.isBlank()) null else KeyCrypto.encrypt(value.trim())).apply()
+
+    val hasGeminiApiKey: Boolean get() = geminiApiKey.isNotBlank()
+
     var hint by string("hint", "")
     var extraKnowledge by string("extra_knowledge", "")
     var fastModel by string("fast_model", DEFAULT_FAST_MODEL)

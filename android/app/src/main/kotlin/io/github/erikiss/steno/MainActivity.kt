@@ -38,6 +38,7 @@ class MainActivity : Activity() {
 
     private lateinit var settings: StenoSettings
     private lateinit var apiKey: EditText
+    private lateinit var geminiApiKey: EditText
     private lateinit var hint: EditText
     private lateinit var knowledge: EditText
     private lateinit var fastModel: EditText
@@ -108,6 +109,9 @@ class MainActivity : Activity() {
         apiKey = field("Claude-API-Schlüssel (leer lassen = gespeicherten behalten)",
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         note("Wird verschlüsselt auf dem Tablet gespeichert und nur an api.anthropic.com gesendet.")
+        geminiApiKey = field("Gemini-API-Schlüssel (Google AI Studio, für Gemini / Neo / Argon)",
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        note("Wird verschlüsselt auf dem Tablet gespeichert und nur an generativelanguage.googleapis.com gesendet.")
 
         title("Analyse")
         hint = field("Hinweis ans Modell (z. B. „Finde den Fehler“, „Eilschrift“)")
@@ -157,6 +161,7 @@ class MainActivity : Activity() {
 
     private fun load() {
         apiKey.hint = if (settings.hasApiKey) "gespeichert ✓" else "sk-ant-…"
+        geminiApiKey.hint = if (settings.hasGeminiApiKey) "gespeichert ✓" else "AIzaSy…"
         hint.setText(settings.hint)
         knowledge.setText(settings.extraKnowledge)
         fastModel.setText(settings.fastModel)
@@ -181,6 +186,11 @@ class MainActivity : Activity() {
             settings.apiKey = apiKey.text.toString()
             apiKey.setText("")
             apiKey.hint = "gespeichert ✓"
+        }
+        if (geminiApiKey.text.isNotBlank()) {
+            settings.geminiApiKey = geminiApiKey.text.toString()
+            geminiApiKey.setText("")
+            geminiApiKey.hint = "gespeichert ✓"
         }
         settings.hint = hint.text.toString().trim()
         settings.extraKnowledge = knowledge.text.toString().trim()
@@ -210,10 +220,17 @@ class MainActivity : Activity() {
         } else {
             "Noch keine Kosten"
         }
+        val keyText = when {
+            settings.fake -> "API-Schlüssel: Fake-Modus ✓"
+            settings.hasApiKey && settings.hasGeminiApiKey -> "API-Schlüssel: Claude ✓ · Gemini ✓"
+            settings.hasApiKey -> "API-Schlüssel: Claude ✓ · Gemini fehlt"
+            settings.hasGeminiApiKey -> "API-Schlüssel: Claude fehlt · Gemini ✓"
+            else -> "API-Schlüssel: fehlt"
+        }
         state.text = buildString {
             append(if (CaptureService.isRunning) "● Läuft – Steuerung schwebt über WebEx" else "○ Gestoppt").append('\n')
             append(if (overlayOk) "Über anderen Apps einblenden: erlaubt ✓" else "Über anderen Apps einblenden: fehlt – bitte erlauben").append('\n')
-            append(if (settings.hasApiKey || settings.fake) "API-Schlüssel: ✓" else "API-Schlüssel: fehlt").append('\n')
+            append(keyText).append('\n')
             append(spend)
         }
         log.text = AppLog.text().ifEmpty { "(noch leer)" }
@@ -226,8 +243,8 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        if (!settings.fake && !settings.hasApiKey) {
-            toast("API-Schlüssel fehlt (oder Fake-Modus einschalten)")
+        if (!settings.fake && !settings.hasApiKey && !settings.hasGeminiApiKey) {
+            toast("API-Schlüssel fehlt (Claude oder Gemini eintragen, oder Fake-Modus)")
             return
         }
         if (Build.VERSION.SDK_INT >= 33 && !askedNotifications &&

@@ -22,10 +22,25 @@ object Pricing {
         "claude-haiku-5-5" to Price(0.10, 0.50, 0.125, 0.20, 0.01),
         "claude-sonnet-5-5" to Price(2.00, 10.00, 2.50, 4.00, 0.20),
         "claude-opus-5-5" to Price(4.00, 20.00, 5.00, 8.00, 0.20),
+        // Gemini models (Google AI Studio pricing)
+        "gemini-2.5-flash" to Price(0.10, 0.40, 0.10, 0.10, 0.025),
+        "gemini-2.5-pro" to Price(1.25, 5.00, 1.25, 1.25, 0.3125),
+        "gemini-2.0-flash" to Price(0.10, 0.40, 0.10, 0.10, 0.025),
+        "gemini-1.5-flash" to Price(0.075, 0.30, 0.075, 0.075, 0.01875),
+        "gemini-1.5-pro" to Price(1.25, 5.00, 1.25, 1.25, 0.3125),
     )
 
-    /** Unknown models are priced like the most expensive known one (conservative). */
-    fun price(model: String): Price = PER_MTOK[model] ?: PER_MTOK.values.maxBy { it.output }
+    /** Unknown models fallback based on name or conservative default. */
+    fun price(model: String): Price {
+        PER_MTOK[model]?.let { return it }
+        val m = model.lowercase()
+        return when {
+            m.contains("flash") -> PER_MTOK["gemini-2.5-flash"]!!
+            m.contains("pro") || m.contains("ultra") -> PER_MTOK["gemini-2.5-pro"]!!
+            m.startsWith("claude") -> PER_MTOK["claude-haiku-5-5"]!!
+            else -> PER_MTOK["gemini-2.5-flash"] ?: PER_MTOK.values.maxBy { it.output }
+        }
+    }
 
     fun estimate(model: String, u: UsageNumbers): Double {
         val p = price(model)

@@ -36,9 +36,11 @@ import io.github.erikiss.steno.core.ChangeGate
 import io.github.erikiss.steno.core.EngineEvent
 import io.github.erikiss.steno.core.FakeVision
 import io.github.erikiss.steno.core.Frame
+import io.github.erikiss.steno.core.GeminiVision
 import io.github.erikiss.steno.core.LiveEngine
 import io.github.erikiss.steno.core.Mark
 import io.github.erikiss.steno.core.MarkKind
+import io.github.erikiss.steno.core.MultiVision
 import io.github.erikiss.steno.core.Prompts
 import io.github.erikiss.steno.core.Signature
 import io.github.erikiss.steno.core.SpendLedger
@@ -257,7 +259,10 @@ class CaptureService : Service(), ControlsView.Actions {
             var knowledge = assets.open("dek.md").reader().use { it.readText() }
             if (s.extraKnowledge.isNotBlank()) knowledge += "\n\n## Material aus meinem Kurs\n" + s.extraKnowledge.trim()
             val schema = assets.open("analysis_schema.json").reader().use { it.readText() }
-            AnthropicVision(s.apiKey, Prompts.buildSystemPrompt(template, knowledge), schema, l, log = { AppLog.w(it) })
+            val systemPrompt = Prompts.buildSystemPrompt(template, knowledge)
+            val anthropicBackend = if (s.hasApiKey) AnthropicVision(s.apiKey, systemPrompt, schema, l, log = { AppLog.w(it) }) else null
+            val geminiBackend = if (s.hasGeminiApiKey) GeminiVision(s.geminiApiKey, systemPrompt, schema, l, log = { AppLog.w(it) }) else null
+            MultiVision(anthropicBackend, geminiBackend)
         }
         engine = LiveEngine(
             scope,

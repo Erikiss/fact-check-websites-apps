@@ -23,6 +23,12 @@ PRICES_PER_MTOK: dict[str, dict[str, float]] = {
     # Used by the live steno mode (steno/vision.py); same pricing page, cache writes 1.25x (5 min) / 2x (1 h) of input.
     "claude-sonnet-5-5": {"input": 2.00, "output": 10.00, "cache_write_5m": 2.50, "cache_write_1h": 4.00, "cache_read": 0.20},
     "claude-opus-5-5": {"input": 4.00, "output": 20.00, "cache_write_5m": 5.00, "cache_write_1h": 8.00, "cache_read": 0.20},
+    # Gemini models (Google AI Studio pricing)
+    "gemini-2.5-flash": {"input": 0.10, "output": 0.40, "cache_write_5m": 0.10, "cache_write_1h": 0.10, "cache_read": 0.025},
+    "gemini-2.5-pro": {"input": 1.25, "output": 5.00, "cache_write_5m": 1.25, "cache_write_1h": 1.25, "cache_read": 0.3125},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cache_write_5m": 0.10, "cache_write_1h": 0.10, "cache_read": 0.025},
+    "gemini-1.5-flash": {"input": 0.075, "output": 0.30, "cache_write_5m": 0.075, "cache_write_1h": 0.075, "cache_read": 0.01875},
+    "gemini-1.5-pro": {"input": 1.25, "output": 5.00, "cache_write_5m": 1.25, "cache_write_1h": 1.25, "cache_read": 0.3125},
 }
 WEB_SEARCH_USD = 0.01        # $10 per 1,000 searches (same pricing page)
 
@@ -35,7 +41,18 @@ def estimate_cost(model: str, usage: dict[str, Any] | None) -> float:
     """Our own cost estimate from an SDK `usage` dict (tokens by kind + server-side web searches)."""
     if not usage:
         return 0.0
-    p = PRICES_PER_MTOK.get(model, PRICES_PER_MTOK["claude-haiku-5-5"])
+    if model in PRICES_PER_MTOK:
+        p = PRICES_PER_MTOK[model]
+    else:
+        m = model.lower()
+        if "flash" in m:
+            p = PRICES_PER_MTOK["gemini-2.5-flash"]
+        elif "pro" in m or "ultra" in m:
+            p = PRICES_PER_MTOK["gemini-2.5-pro"]
+        elif m.startswith("claude"):
+            p = PRICES_PER_MTOK["claude-haiku-5-5"]
+        else:
+            p = PRICES_PER_MTOK["gemini-2.5-flash"]
     cache = usage.get("cache_creation") or {}
     write_1h = cache.get("ephemeral_1h_input_tokens", 0) or 0
     write_5m = cache.get("ephemeral_5m_input_tokens", 0) or 0

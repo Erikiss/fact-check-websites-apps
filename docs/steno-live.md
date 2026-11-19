@@ -20,9 +20,10 @@ Modell jedes Zeichen erst visuell (`strokes`) und gibt zu jeder Lesung eine Konf
 ## Schnellstart (Windows)
 
 1. Abhängigkeiten installieren: `uv sync`
-2. `.env` aus `.env.example` anlegen und `ANTHROPIC_API_KEY=` eintragen. Der Live-Modus ruft die Messages API
-   direkt auf und streamt die Antwort. Der Abo-Weg des Faktencheckers (Agent SDK) startet pro Anfrage einen eigenen
-   Prozess und wäre für „live“ zu langsam.
+2. `.env` aus `.env.example` anlegen und API-Schlüssel eintragen:
+   - Für Claude-Modelle (Standard: `claude-sonnet-5-5`, `claude-opus-5-5`): `ANTHROPIC_API_KEY=`
+   - Für Gemini-Modelle (z. B. `gemini-2.5-flash`, `gemini-2.5-pro`, `neon`, `argon`): `GEMINI_API_KEY=`
+   - Beide Anbieter können auch gemischt werden (z. B. schnell = `gemini-2.5-flash`, tief = `claude-opus-5-5`).
 3. Starten: `uv run factcheck-steno`
 4. Den Bereich mit der Steno-Schrift aufziehen – nur Tafel/Folie, **nicht** das Kamerabild der Lehrkraft (Bewegung
    dort würde ständig neue Analysen auslösen). Der Bereich wird gemerkt.
@@ -110,6 +111,8 @@ Grobe Werte pro Analyse (hochauflösendes Bild ~2.000–3.500 Bild-Tokens, gecac
 |---|---|
 | ⚡ Sonnet 5.5 (effort `low`, adaptive Thinking) | 0,01–0,03 $ |
 | 🔍 Opus 5.5 (effort `high`, adaptive Thinking) | 0,05–0,15 $ |
+| ⚡ Gemini 2.5 Flash (schnell, günstig) | 0,0005–0,002 $ |
+| 🔍 Gemini 2.5 Pro (gründlich) | 0,005–0,02 $ |
 | *(optional sparsam: Haiku 5.5, 1568 Tokens)* | *0,0003–0,0006 $* |
 
 Jede Analyse wird mit ihren echten Token-Zahlen in `budget_ledger.jsonl` eingetragen (Zweck `steno-fast` /

@@ -25,15 +25,21 @@ from factcheck.log import setup_logging
 from factcheck.pipeline.budget import BudgetExceeded, BudgetLedger
 from factcheck.steno.imaging import prepare_image
 from factcheck.steno.render import format_mark, render_annotated
-from factcheck.steno.vision import AnthropicVision, FakeVision, StageConfig, VisionBackend, stages_from_settings
+from factcheck.steno.vision import (
+    FakeVision,
+    MultiVision,
+    StageConfig,
+    VisionBackend,
+    stages_from_settings,
+)
 
 
 def build_backend(settings: Settings, fake: bool = False) -> VisionBackend:
-    """FakeVision for --fake / STENO_FAKE=true, else the Messages API with the project's spend ledger."""
+    """FakeVision for --fake / STENO_FAKE=true, else MultiVision routing to Gemini/Claude."""
     if fake or settings.steno_fake:
         return FakeVision()
     ledger = BudgetLedger(settings.ledger_path, settings.total_budget_usd, settings.daily_app_budget_usd)
-    return AnthropicVision(settings, ledger)
+    return MultiVision(settings, ledger)
 
 
 async def analyse_image(settings: Settings, path: Path, stages: list[StageConfig], backend: VisionBackend,

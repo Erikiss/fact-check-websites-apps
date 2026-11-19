@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import anthropic
+import httpx
 import numpy as np
 from PIL import Image
 
@@ -405,3 +406,323 @@ class FakeVision:
         result.stop_reason = "end_turn"
         result.duration_s = round(time.monotonic() - t0, 3)
         return result
+
+
+# --------------------------------------------------------------------------------------------------- gemini
+def to_gemini_schema(schema: Any) -> Any:
+    """Strip OpenAPI / JSON Schema keywords like additionalProperties that some Gemini endpoints reject."""
+    if isinstance(schema, dict):
+        res = {}
+        for k, v in schema.items():
+            if k == "additionalProperties":
+                continue
+            res[k] = to_gemini_schema(v)
+        return res
+    if isinstance(schema, list):
+        return [to_gemini_schema(x) for x in schema]
+    return schema
+
+
+def is_gemini_model(model: str) -> bool:
+    """Return True if model name targets Gemini / Google AI Studio."""
+    m = model.strip().lower()
+    return m.startswith(("gemini", "models/gemini", "google", "neon", "argon", "gemini:"))
+
+
+def normalize_gemini_model(model: str) -> str:
+    m = model.strip()
+    if m.startswith("gemini:"):
+        m = m[len("gemini:"):]
+    elif m.startswith("google:"):
+        m = m[len("google:"):]
+    if not m.startswith("models/"):
+        return f"models/{m}"
+    return m
+
+
+class GeminiVision:
+    """One streamed Google AI Studio Gemini API call per analysed frame via SSE."""
+
+    def __init__(self, settings: Settings, ledger: BudgetLedger, http_client: httpx.AsyncClient | None = None,
+                 system_prompt: str | None = None, base_url: str = "https://generativelanguage.googleapis.com"):
+        self.settings = settings
+        self.ledger = ledger
+        self.budget = StenoBudget(ledger, settings.steno_daily_budget_usd, settings.steno_deep_budget_share)
+        k = settings.gemini_api_key
+        self.key = k.get_secret_value() if hasattr(k, "get_secret_value") else (str(k) if k else "")
+        self.auth = "gemini_api_key" if self.key else "none"
+        self.base_url = base_url.rstrip("/")
+        self._custom_client = http_client
+        self.system_prompt = system_prompt or build_system_prompt(load_knowledge(settings.steno_knowledge_file or None))
+        self._system_tokens = len(self.system_prompt) // 3 + 50
+        self._frames_dir: Path | None = settings.logs_dir / "steno-frames" if settings.steno_save_frames else None
+        self._schema = to_gemini_schema(ANALYSIS_SCHEMA)
+        llm_event("steno_system_prompt_gemini", "-", text=self.system_prompt)
+
+    def build_request_body(self, image: PreparedImage, stage: StageConfig, hint: str, context: str = "") -> dict[str, Any]:
+        b64_img = base64.standard_b64encode(image.png).decode("ascii")
+        user_text = build_user_text(image.width, image.height, hint, context)
+        return {
+            "system_instruction": {
+                "parts": [{"text": self.system_prompt}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": b64_img,
+                            }
+                        },
+                        {
+                            "text": user_text,
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": self._schema,
+                "maxOutputTokens": stage.max_tokens,
+            },
+        }
+
+    def _save_frame(self, run_id: str, image: PreparedImage) -> str | None:
+        if self._frames_dir is None:
+            return None
+        self._frames_dir.mkdir(parents=True, exist_ok=True)
+        path = self._frames_dir / f"{run_id}.png"
+        path.write_bytes(image.png)
+        return str(path)
+
+    async def analyze(self, image: PreparedImage, stage: StageConfig, *, frame_id: int, hint: str = "",
+                      context: str = "", on_mark: MarkCallback | None = None) -> StenoResult:
+        """Stream one analysis via Gemini SSE endpoint; checks and records spend."""
+        worst = worst_case_usd(stage.model, self._system_tokens + image.tokens + 200, stage.max_tokens)
+        self.budget.check(stage.stage, worst)
+        purpose = f"steno-{stage.stage}"
+        self.ledger.reserve(worst, purpose)
+        run_id = uuid.uuid4().hex[:10]
+        result = StenoResult(frame_id=frame_id, stage=stage.stage, model=stage.model, image_width=image.width,
+                             image_height=image.height, image_tokens=image.tokens)
+        if not self.key and self._custom_client is None:
+            self.ledger.release(worst)
+            result.error = "Keine Zugangsdaten: GEMINI_API_KEY in .env eintragen (oder STENO_FAKE=true zum Testen)"
+            return result
+
+        body = self.build_request_body(image, stage, hint, context)
+        model_path = normalize_gemini_model(stage.model)
+        url = f"{self.base_url}/v1beta/{model_path}:streamGenerateContent?alt=sse"
+        headers = {"Content-Type": "application/json"}
+        if self.key:
+            headers["x-goog-api-key"] = self.key
+
+        llm_event("steno_request_gemini", run_id, stage=stage.stage, model=stage.model, frame_id=frame_id, hint=hint,
+                  context=context,
+                  image={"width": image.width, "height": image.height, "tokens": image.tokens, "sha1": image.sha1,
+                         "path": self._save_frame(run_id, image)})
+
+        parser = ItemStream()
+        t0 = time.monotonic()
+        last_usage_meta: dict[str, Any] | None = None
+        final_finish_reason: str = ""
+        success = False
+
+        try:
+            if self._custom_client is not None:
+                client_ctx = self._custom_client
+                owns_client = False
+            else:
+                client_ctx = httpx.AsyncClient(timeout=httpx.Timeout(stage.timeout_s, connect=15.0))
+                owns_client = True
+
+            try:
+                async with client_ctx.stream("POST", url, headers=headers, json=body) as response:
+                    if response.status_code != 200:
+                        err_text = (await response.aread()).decode("utf-8", errors="replace")
+                        if response.status_code in (401, 403):
+                            result.error = "Gemini-API-Schlüssel ungültig oder keine Berechtigung (GEMINI_API_KEY prüfen)"
+                        elif response.status_code == 404:
+                            result.error = f"Gemini-Modell nicht gefunden: '{stage.model}'"
+                        elif response.status_code == 429:
+                            result.error = "Gemini-Rate-Limit erreicht – der nächste Frame versucht es erneut"
+                        else:
+                            result.error = f"Gemini-API-Fehler {response.status_code}: {err_text[:200]}"
+                        log.warning("steno %s Gemini analysis failed: %s", stage.stage, result.error)
+                        return result
+
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if not data_str or data_str == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        candidates = chunk.get("candidates") or []
+                        if candidates:
+                            c = candidates[0]
+                            fr = c.get("finishReason")
+                            if fr:
+                                final_finish_reason = fr
+                            parts = (c.get("content") or {}).get("parts") or []
+                            for part in parts:
+                                if part.get("thought"):
+                                    continue
+                                text = part.get("text")
+                                if text:
+                                    if result.ttft_s is None:
+                                        result.ttft_s = round(time.monotonic() - t0, 3)
+                                    for raw in parser.feed(text):
+                                        mark = Mark.from_raw(raw, image.width, image.height)
+                                        if mark is None:
+                                            continue
+                                        if result.first_mark_s is None:
+                                            result.first_mark_s = round(time.monotonic() - t0, 3)
+                                        result.marks.append(mark)
+                                        if on_mark is not None:
+                                            on_mark(mark)
+
+                        um = chunk.get("usageMetadata")
+                        if um:
+                            last_usage_meta = um
+
+                    success = True
+            finally:
+                if owns_client:
+                    await client_ctx.aclose()
+
+        except asyncio.CancelledError:
+            result.cancelled = True
+            result.duration_s = round(time.monotonic() - t0, 3)
+            self._record_partial(run_id, purpose, stage, image, last_usage_meta, parser, result)
+            raise
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            result.error = "Keine Verbindung zur Gemini-API"
+            log.warning("steno %s Gemini connection error: %s", stage.stage, exc)
+        except httpx.TimeoutException as exc:
+            result.error = "Zeitüberschreitung bei der Gemini-Anfrage"
+            log.warning("steno %s Gemini timeout: %s", stage.stage, exc)
+        except httpx.HTTPError as exc:
+            result.error = f"Gemini-HTTP-Fehler: {exc}"
+            log.warning("steno %s Gemini HTTP error: %s", stage.stage, exc)
+        finally:
+            self.ledger.release(worst)
+
+        result.duration_s = round(time.monotonic() - t0, 3)
+        if success:
+            self._finish(result, final_finish_reason, last_usage_meta, parser, image)
+            result.cost_usd = self.ledger.record(
+                purpose=purpose, model=stage.model, auth=self.auth, usage=result.usage, sdk_cost_usd=None,
+                run_id=run_id, extra={"frame_id": frame_id, "served_by": result.served_by,
+                                      "image_tokens": image.tokens, "ttft_s": result.ttft_s,
+                                      "duration_s": result.duration_s, "stop_reason": result.stop_reason})
+        elif parser.text:
+            self._record_partial(run_id, purpose, stage, image, last_usage_meta, parser, result)
+
+        llm_event("steno_result_gemini", run_id, stage=stage.stage, frame_id=frame_id, output=parser.text,
+                  stop_reason=result.stop_reason, usage=result.usage, cost_usd=result.cost_usd,
+                  ttft_s=result.ttft_s, first_mark_s=result.first_mark_s, duration_s=result.duration_s,
+                  served_by=result.served_by, error=result.error)
+        return result
+
+    def _finish(self, result: StenoResult, finish_reason: str, usage_meta: dict[str, Any] | None,
+                parser: ItemStream, image: PreparedImage) -> None:
+        result.stop_reason = finish_reason or "STOP"
+        result.served_by = result.model
+        if usage_meta:
+            result.usage = {
+                "input_tokens": usage_meta.get("promptTokenCount", 0),
+                "output_tokens": usage_meta.get("candidatesTokenCount", 0),
+                "cache_read_input_tokens": usage_meta.get("cachedContentTokenCount", 0),
+                "cache_creation_input_tokens": 0,
+            }
+        else:
+            result.usage = {
+                "input_tokens": self._system_tokens + image.tokens,
+                "output_tokens": max(1, len(parser.text) // 3),
+            }
+
+        if finish_reason == "SAFETY":
+            result.error = "Modell hat die Analyse abgelehnt (SAFETY)"
+            result.marks = []
+            return
+
+        data = parser.final()
+        if data is not None:
+            result.answer = str(data.get("answer") or "").strip()
+            if not result.marks:
+                for raw in data.get("items") or []:
+                    mark = Mark.from_raw(raw, image.width, image.height) if isinstance(raw, dict) else None
+                    if mark is not None:
+                        result.marks.append(mark)
+
+        if finish_reason == "MAX_TOKENS":
+            result.error = "Antwort abgeschnitten (STENO_*_MAX_TOKENS erhöhen)"
+
+    def _record_partial(self, run_id: str, purpose: str, stage: StageConfig, image: PreparedImage,
+                        usage_meta: dict[str, Any] | None, parser: ItemStream, result: StenoResult) -> None:
+        usage: dict[str, Any] = {}
+        if usage_meta:
+            usage["input_tokens"] = usage_meta.get("promptTokenCount", self._system_tokens + image.tokens)
+            usage["output_tokens"] = max(int(usage_meta.get("candidatesTokenCount") or 0), len(parser.text) // 3)
+            usage["cache_read_input_tokens"] = usage_meta.get("cachedContentTokenCount", 0)
+        else:
+            usage["input_tokens"] = self._system_tokens + image.tokens
+            usage["output_tokens"] = max(1, len(parser.text) // 3)
+        result.usage = usage
+        result.cost_usd = self.ledger.record(
+            purpose=purpose, model=stage.model, auth=self.auth, usage=usage,
+            sdk_cost_usd=None, run_id=run_id,
+            extra={"frame_id": result.frame_id, "partial": True, "cancelled": result.cancelled})
+
+
+# --------------------------------------------------------------------------------------------------- multi
+class MultiVision:
+    """Dispatches stage analyses to GeminiVision or AnthropicVision depending on model name."""
+
+    def __init__(self, settings: Settings, ledger: BudgetLedger,
+                 anthropic_backend: VisionBackend | None = None,
+                 gemini_backend: VisionBackend | None = None):
+        self.settings = settings
+        self.ledger = ledger
+        self._anthropic = anthropic_backend
+        self._gemini = gemini_backend
+
+    @property
+    def anthropic(self) -> VisionBackend:
+        if self._anthropic is None:
+            self._anthropic = AnthropicVision(self.settings, self.ledger)
+        return self._anthropic
+
+    @property
+    def gemini(self) -> VisionBackend:
+        if self._gemini is None:
+            self._gemini = GeminiVision(self.settings, self.ledger)
+        return self._gemini
+
+    @property
+    def auth(self) -> str:
+        parts = []
+        if self.settings.anthropic_api_key:
+            parts.append("anthropic")
+        if self.settings.gemini_api_key:
+            parts.append("gemini")
+        return "+".join(parts) or "default"
+
+    def backend_for(self, model: str) -> VisionBackend:
+        if is_gemini_model(model):
+            return self.gemini
+        return self.anthropic
+
+    async def analyze(self, image: PreparedImage, stage: StageConfig, *, frame_id: int, hint: str = "",
+                      context: str = "", on_mark: MarkCallback | None = None) -> StenoResult:
+        backend = self.backend_for(stage.model)
+        return await backend.analyze(image, stage, frame_id=frame_id, hint=hint, context=context, on_mark=on_mark)
+
