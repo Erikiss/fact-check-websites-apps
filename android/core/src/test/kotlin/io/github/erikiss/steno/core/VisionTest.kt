@@ -261,11 +261,19 @@ class VisionTest {
         assertTrue(isGeminiModel("google/gemini-2.0-flash"))
         assertTrue(isGeminiModel("neon"))
         assertTrue(isGeminiModel("argon"))
+        assertTrue(isGeminiModel("carbon"))
+        assertTrue(isGeminiModel("hydrogen"))
         assertTrue(isGeminiModel("gemini:custom-model"))
         assertFalse(isGeminiModel("claude-sonnet-5-5"))
         assertFalse(isGeminiModel("claude-opus-5-5"))
         assertEquals("models/gemini-2.5-flash", normalizeGeminiModel("gemini-2.5-flash"))
         assertEquals("models/my-model", normalizeGeminiModel("gemini:my-model"))
+        assertEquals("models/gemini-4-neon", normalizeGeminiModel("neon"))
+        assertEquals("models/gemini-4-argon", normalizeGeminiModel("argon"))
+        assertEquals("models/gemini-4-carbon", normalizeGeminiModel("carbon"))
+        assertEquals("models/gemini-4-hydrogen", normalizeGeminiModel("hydrogen"))
+        assertEquals("models/gemini-2.5-flash", normalizeGeminiModel("flash"))
+        assertEquals("models/gemini-2.5-pro", normalizeGeminiModel("pro"))
     }
 
     @Test

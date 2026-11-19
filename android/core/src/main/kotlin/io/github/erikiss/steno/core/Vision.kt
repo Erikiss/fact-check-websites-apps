@@ -379,16 +379,26 @@ class FakeVision(private val delayMs: Long = 150, private val boxFinder: (Prepar
     }
 }
 
+val GEMINI_ALIASES: Map<String, String> = mapOf(
+    "neon" to "gemini-4-neon",
+    "argon" to "gemini-4-argon",
+    "carbon" to "gemini-4-carbon",
+    "hydrogen" to "gemini-4-hydrogen",
+    "flash" to "gemini-2.5-flash",
+    "pro" to "gemini-2.5-pro",
+)
+
 fun isGeminiModel(model: String): Boolean {
     val m = model.trim().lowercase()
     return m.startsWith("gemini") || m.startsWith("models/gemini") ||
         m.startsWith("google") || m.startsWith("neon") || m.startsWith("argon") ||
-        m.startsWith("gemini:")
+        m.startsWith("carbon") || m.startsWith("hydrogen") || m.startsWith("gemini:")
 }
 
 fun normalizeGeminiModel(model: String): String {
-    val m = model.trim().removePrefix("gemini:").removePrefix("google:")
-    return if (m.startsWith("models/")) m else "models/$m"
+    val raw = model.trim().removePrefix("gemini:").removePrefix("google:")
+    val mapped = GEMINI_ALIASES[raw.lowercase()] ?: raw
+    return if (mapped.startsWith("models/")) mapped else "models/$mapped"
 }
 
 fun cleanSchemaForGemini(node: JsonNode): JsonNode {

@@ -223,6 +223,15 @@ class CoreLogicTest {
     }
 
     @Test
+    fun pricingRecognizesGemini4ModelsAndAliases() {
+        assertEquals(3.00, Pricing.price("gemini-4-neon").input, 1e-9)
+        assertEquals(15.00, Pricing.price("neon").output, 1e-9)
+        assertEquals(10.00, Pricing.price("argon").output, 1e-9)
+        assertEquals(10.00, Pricing.price("carbon").output, 1e-9)
+        assertEquals(7.50, Pricing.price("hydrogen").output, 1e-9)
+    }
+
+    @Test
     fun inkBoxesFindSeparateWords() {
         val w = 240
         val h = 90

@@ -256,12 +256,20 @@ def test_is_gemini_model_detection():
     assert is_gemini_model("google/gemini-2.0-flash")
     assert is_gemini_model("neon")
     assert is_gemini_model("argon")
+    assert is_gemini_model("carbon")
+    assert is_gemini_model("hydrogen")
     assert is_gemini_model("gemini:my-custom-model")
     assert not is_gemini_model("claude-sonnet-5-5")
     assert not is_gemini_model("claude-opus-5-5")
     assert normalize_gemini_model("gemini-2.5-flash") == "models/gemini-2.5-flash"
     assert normalize_gemini_model("gemini:my-model") == "models/my-model"
     assert normalize_gemini_model("models/gemini-1.5-pro") == "models/gemini-1.5-pro"
+    assert normalize_gemini_model("neon") == "models/gemini-4-neon"
+    assert normalize_gemini_model("argon") == "models/gemini-4-argon"
+    assert normalize_gemini_model("carbon") == "models/gemini-4-carbon"
+    assert normalize_gemini_model("hydrogen") == "models/gemini-4-hydrogen"
+    assert normalize_gemini_model("flash") == "models/gemini-2.5-flash"
+    assert normalize_gemini_model("pro") == "models/gemini-2.5-pro"
 
 
 def test_gemini_request_shape(settings, ledger, image):

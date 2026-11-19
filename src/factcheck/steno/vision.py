@@ -423,10 +423,20 @@ def to_gemini_schema(schema: Any) -> Any:
     return schema
 
 
+GEMINI_ALIASES = {
+    "neon": "gemini-4-neon",
+    "argon": "gemini-4-argon",
+    "carbon": "gemini-4-carbon",
+    "hydrogen": "gemini-4-hydrogen",
+    "flash": "gemini-2.5-flash",
+    "pro": "gemini-2.5-pro",
+}
+
+
 def is_gemini_model(model: str) -> bool:
     """Return True if model name targets Gemini / Google AI Studio."""
     m = model.strip().lower()
-    return m.startswith(("gemini", "models/gemini", "google", "neon", "argon", "gemini:"))
+    return m.startswith(("gemini", "models/gemini", "google", "neon", "argon", "carbon", "hydrogen", "gemini:"))
 
 
 def normalize_gemini_model(model: str) -> str:
@@ -435,6 +445,7 @@ def normalize_gemini_model(model: str) -> str:
         m = m[len("gemini:"):]
     elif m.startswith("google:"):
         m = m[len("google:"):]
+    m = GEMINI_ALIASES.get(m.lower(), m)
     if not m.startswith("models/"):
         return f"models/{m}"
     return m

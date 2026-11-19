@@ -23,6 +23,10 @@ object Pricing {
         "claude-sonnet-5-5" to Price(2.00, 10.00, 2.50, 4.00, 0.20),
         "claude-opus-5-5" to Price(4.00, 20.00, 5.00, 8.00, 0.20),
         // Gemini models (Google AI Studio pricing)
+        "gemini-4-neon" to Price(3.00, 15.00, 3.00, 3.00, 0.75),
+        "gemini-4-argon" to Price(2.00, 10.00, 2.00, 2.00, 0.50),
+        "gemini-4-carbon" to Price(2.00, 10.00, 2.00, 2.00, 0.50),
+        "gemini-4-hydrogen" to Price(1.50, 7.50, 1.50, 1.50, 0.375),
         "gemini-2.5-flash" to Price(0.10, 0.40, 0.10, 0.10, 0.025),
         "gemini-2.5-pro" to Price(1.25, 5.00, 1.25, 1.25, 0.3125),
         "gemini-2.0-flash" to Price(0.10, 0.40, 0.10, 0.10, 0.025),
@@ -35,6 +39,9 @@ object Pricing {
         PER_MTOK[model]?.let { return it }
         val m = model.lowercase()
         return when {
+            m.contains("neon") -> PER_MTOK["gemini-4-neon"]!!
+            m.contains("argon") || m.contains("carbon") -> PER_MTOK["gemini-4-argon"]!!
+            m.contains("hydrogen") -> PER_MTOK["gemini-4-hydrogen"]!!
             m.contains("flash") -> PER_MTOK["gemini-2.5-flash"]!!
             m.contains("pro") || m.contains("ultra") -> PER_MTOK["gemini-2.5-pro"]!!
             m.startsWith("claude") -> PER_MTOK["claude-haiku-5-5"]!!
