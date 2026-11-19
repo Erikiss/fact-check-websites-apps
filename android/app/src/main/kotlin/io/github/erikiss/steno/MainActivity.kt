@@ -41,7 +41,10 @@ class MainActivity : Activity() {
     private lateinit var hint: EditText
     private lateinit var knowledge: EditText
     private lateinit var fastModel: EditText
+    private lateinit var fastThinking: Switch
+    private lateinit var fastEffort: EditText
     private lateinit var deepModel: EditText
+    private lateinit var deepEffort: EditText
     private lateinit var deepAuto: Switch
     private lateinit var fake: Switch
     private lateinit var dailyBudget: EditText
@@ -111,9 +114,12 @@ class MainActivity : Activity() {
         knowledge = field("Eigenes Kursmaterial (z. B. eure Kürzelliste) – wird dem DEK-Wissen angehängt",
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE, lines = 3)
         fastModel = field("Schnelles Modell")
+        fastThinking = switch("Schnelle Stufe mit Denkpause (genauer, ca. 1–2 s langsamer)")
+        fastEffort = field("Denktiefe schnell (low / medium / high)")
         deepModel = field("Genaues Modell (leer = keine genaue Prüfung)")
+        deepEffort = field("Denktiefe genau (low / medium / high)")
         deepAuto = switch("Genaue Prüfung automatisch, sobald das Bild still steht")
-        imageTokens = field("Bilddetail: max. Bild-Tokens (1568 = Standard, bis 4784 = feiner, langsamer)", InputType.TYPE_CLASS_NUMBER)
+        imageTokens = field("Bilddetail: max. Bild-Tokens (4784 = Standard/fein, 1568 = schneller/günstiger)", InputType.TYPE_CLASS_NUMBER)
         fake = switch("Fake-Modus: ohne API, 0 $ (nur zum Ausprobieren der Oberfläche)")
 
         title("Budget (geschätzte API-Kosten)")
@@ -154,7 +160,10 @@ class MainActivity : Activity() {
         hint.setText(settings.hint)
         knowledge.setText(settings.extraKnowledge)
         fastModel.setText(settings.fastModel)
+        fastThinking.isChecked = settings.fastThinking == "adaptive"
+        fastEffort.setText(settings.fastEffort)
         deepModel.setText(settings.deepModel)
+        deepEffort.setText(settings.deepEffort)
         deepAuto.isChecked = settings.deepAuto
         fake.isChecked = settings.fake
         imageTokens.setText(settings.maxImageTokens.toString())
@@ -164,6 +173,9 @@ class MainActivity : Activity() {
 
     private fun number(e: EditText, default: Double) = e.text.toString().replace(',', '.').trim().toDoubleOrNull() ?: default
 
+    private fun effort(e: EditText, default: String) =
+        e.text.toString().trim().lowercase(Locale.ROOT).takeIf { it in StenoSettings.VALID_EFFORTS } ?: default
+
     private fun save() {
         if (apiKey.text.isNotBlank()) {
             settings.apiKey = apiKey.text.toString()
@@ -172,11 +184,16 @@ class MainActivity : Activity() {
         }
         settings.hint = hint.text.toString().trim()
         settings.extraKnowledge = knowledge.text.toString().trim()
-        settings.fastModel = fastModel.text.toString().trim().ifEmpty { "claude-haiku-5-5" }
+        settings.fastModel = fastModel.text.toString().trim().ifEmpty { StenoSettings.DEFAULT_FAST_MODEL }
+        settings.fastThinking = if (fastThinking.isChecked) "adaptive" else "off"
+        settings.fastEffort = effort(fastEffort, StenoSettings.DEFAULT_FAST_EFFORT)
+        fastEffort.setText(settings.fastEffort)
         settings.deepModel = deepModel.text.toString().trim()
+        settings.deepEffort = effort(deepEffort, StenoSettings.DEFAULT_DEEP_EFFORT)
+        deepEffort.setText(settings.deepEffort)
         settings.deepAuto = deepAuto.isChecked
         settings.fake = fake.isChecked
-        val tokens = number(imageTokens, 1568.0).toInt().coerceIn(256, ImageMath.HIGH_RES_MAX_TOKENS)
+        val tokens = number(imageTokens, StenoSettings.DEFAULT_MAX_IMAGE_TOKENS.toDouble()).toInt().coerceIn(256, ImageMath.HIGH_RES_MAX_TOKENS)
         settings.maxImageTokens = tokens
         settings.maxImageEdge = if (tokens > ImageMath.STANDARD_MAX_TOKENS) ImageMath.HIGH_RES_MAX_EDGE else ImageMath.STANDARD_MAX_EDGE
         settings.dailyBudget = number(dailyBudget, 20.0).coerceAtLeast(0.0)

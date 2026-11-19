@@ -19,8 +19,17 @@ class EngineTest {
 
     private class Scripted(val fastMs: Long = 100, val budgetError: Boolean = false) : VisionBackend {
         val calls = ArrayList<Pair<Stage, Long>>()
-        override suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, onMark: (Mark) -> Unit): StenoResult {
+        val contexts = ArrayList<Triple<Stage, Long, String>>()
+        override suspend fun analyze(
+            image: PreparedImage,
+            stage: StageConfig,
+            frameId: Long,
+            hint: String,
+            context: String,
+            onMark: (Mark) -> Unit,
+        ): StenoResult {
             calls.add(stage.stage to frameId)
+            contexts.add(Triple(stage.stage, frameId, context))
             if (budgetError) throw BudgetExceeded("Tagesbudget erreicht")
             if (stage.stage == Stage.DEEP) awaitCancellation()
             delay(fastMs)
@@ -32,23 +41,31 @@ class EngineTest {
         }
     }
 
-    private fun TestScope.engine(backend: VisionBackend, events: MutableList<EngineEvent>, maxInflight: Int = 2): Pair<LiveEngine<String>, CoroutineScope> {
+    private fun TestScope.engine(
+        backend: VisionBackend,
+        events: MutableList<EngineEvent>,
+        maxInflight: Int = 2,
+        context: (Stage, Long) -> String = { _, _ -> "" },
+    ): Pair<LiveEngine<String>, CoroutineScope> {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(dispatcher + SupervisorJob())
         val engine = LiveEngine<String>(scope, backend, stages, prepare = { PreparedImage(ByteArray(0), 120, 40, 240, 80) },
-            hint = { "Hinweis" }, onEvent = { events.add(it) }, maxInflightFast = maxInflight, prepareDispatcher = dispatcher)
+            hint = { "Hinweis" }, onEvent = { events.add(it) }, maxInflightFast = maxInflight, prepareDispatcher = dispatcher,
+            context = context)
         return engine to scope
     }
 
     @Test
     fun eventsArriveInOrderMarksBeforeDone() = runTest {
         val events = ArrayList<EngineEvent>()
-        val (engine, scope) = engine(Scripted(), events)
+        val backend = Scripted()
+        val (engine, scope) = engine(backend, events, context = { s, id -> "${s.id}:$id" })
         engine.submit(Frame(1, "pic"), Stage.FAST)
         advanceUntilIdle()
         assertEquals(listOf("Started", "MarkAdded", "MarkAdded", "Done"), events.map { it::class.simpleName })
         val started = events[0] as EngineEvent.Started
         assertEquals(120 to 40, started.imageWidth to started.imageHeight)
+        assertEquals(listOf(Triple(Stage.FAST, 1L, "fast:1")), backend.contexts)
         scope.cancel()
     }
 

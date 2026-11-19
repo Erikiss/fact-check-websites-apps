@@ -46,7 +46,8 @@ def format_mark(mark: Mark) -> str:
     """One terminal line per mark."""
     box = "[" + ",".join(str(round(v)) for v in mark.box) + "]" if mark.box else "[ohne Box]"
     icon = {"word": "·", "error": "", "note": "!"}[mark.kind]          # error lines already start with ✗
-    return " ".join(p for p in (icon, box, " | ".join(label_lines(mark))) if p)
+    strokes = f"({mark.strokes})" if mark.strokes else ""
+    return " ".join(p for p in (icon, box, " | ".join(label_lines(mark)), strokes) if p)
 
 
 def render_annotated(image: PreparedImage | Image.Image, result: StenoResult, scale: float = 1.0,

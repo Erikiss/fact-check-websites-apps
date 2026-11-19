@@ -23,11 +23,11 @@ from factcheck.steno.vision import (
 )
 
 DOC = {"items": [
-    {"box": [10, 10, 60, 50], "text": "und", "alternatives": [], "kind": "word", "issue": "", "intended": "",
-     "fix": "", "spot": [], "confidence": 0.9},
-    {"box": [80, 10, 150, 60], "text": "Hans", "alternatives": ["Hanse"], "kind": "error",
-     "issue": "Verstärkung fehlt", "intended": "Haus", "fix": "au: tief + verstärkt", "spot": [100, 30],
-     "confidence": 0.5},
+    {"box": [10, 10, 60, 50], "strokes": "Kürzel und", "text": "und", "alternatives": [], "kind": "word",
+     "issue": "", "intended": "", "fix": "", "spot": [], "confidence": 0.9},
+    {"box": [80, 10, 150, 60], "strokes": "h + au-tief + s", "text": "Hans", "alternatives": ["Hanse"],
+     "kind": "error", "issue": "Verstärkung fehlt", "intended": "Haus", "fix": "au: tief + verstärkt",
+     "spot": [100, 30], "confidence": 0.5},
 ], "answer": "Hans statt Haus: Verstärkung fehlt."}
 USAGE = {"input_tokens": 900, "output_tokens": 210, "cache_read_input_tokens": 2400, "cache_creation_input_tokens": 0}
 FAST = StageConfig("fast", "claude-haiku-5-5", "low", "off", 2048)
@@ -119,7 +119,12 @@ def test_thinking_and_effort_per_model_family():
 
 
 def test_stages_from_settings(settings):
-    assert set(stages_from_settings(settings)) == {"fast", "deep"}
+    stages = stages_from_settings(settings)
+    assert set(stages) == {"fast", "deep"}
+    assert stages["fast"].model == "claude-sonnet-5-5" and stages["fast"].thinking == "adaptive"
+    assert stages["fast"].max_tokens == 4096 and stages["fast"].timeout_s == 45.0
+    assert stages["deep"].model == "claude-opus-5-5" and stages["deep"].effort == "high"
+    assert stages["deep"].max_tokens == 16000 and stages["deep"].timeout_s == 180.0
     settings.steno_deep_model = ""
     assert set(stages_from_settings(settings)) == {"fast"}
 
@@ -134,10 +139,11 @@ def test_build_request_is_cache_friendly_and_well_formed(settings, ledger, image
     assert img_block["type"] == "image" and img_block["source"]["media_type"] == "image/png"
     assert text_block["text"].startswith(f"Bildgröße: {image.width}×{image.height}") and "Finde den Fehler" in text_block["text"]
     assert "extra_body" not in fast                                   # Haiku 5.5 has no server-side fallback
-    deep = vision.build_request(image, DEEP, hint="")
+    deep = vision.build_request(image, DEEP, hint="", context="Vorheriger Satz")
     assert deep["thinking"] == {"type": "adaptive"}
     assert deep["extra_headers"] == {"anthropic-beta": FALLBACK_BETA} and deep["extra_body"] == {"fallbacks": "default"}
     assert deep["system"] == fast["system"]                           # identical prefix for every frame
+    assert "Vorheriger Satz" in deep["messages"][0]["content"][1]["text"]
 
 
 # ------------------------------------------------------------------------------------------------ streaming
@@ -147,6 +153,7 @@ async def test_analyze_streams_marks_in_order_and_records_spend(settings, ledger
     seen = []
     result = await vision.analyze(image, FAST, frame_id=7, on_mark=seen.append)
     assert [m.text for m in seen] == ["und", "Hans"] == [m.text for m in result.marks]
+    assert result.marks[0].strokes == "Kürzel und" and result.marks[1].strokes == "h + au-tief + s"
     assert result.answer == DOC["answer"] and result.error is None and result.stop_reason == "end_turn"
     assert result.ttft_s is not None and result.first_mark_s is not None
     assert result.errors[0].intended == "Haus" and result.errors[0].spot == (100.0, 30.0)

@@ -128,6 +128,7 @@ class CaptureService : Service(), ControlsView.Actions {
     private var fastFailures = 0
     private var lastInfo = ""
     private val latest = HashMap<Stage, StenoResult>()
+    private var lastDeepContext: Pair<Long, String>? = null
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -240,12 +241,12 @@ class CaptureService : Service(), ControlsView.Actions {
     private fun setupEngine() {
         val s = settings
         val stages = buildMap {
-            put(Stage.FAST, StageConfig(Stage.FAST, s.fastModel.trim(), s.fastEffort, "off", 2048, true, maxRetries = 0, timeoutS = 30))
+            put(Stage.FAST, StageConfig(Stage.FAST, s.fastModel.trim(), s.fastEffort, s.fastThinking, 4096, true, maxRetries = 0, timeoutS = 45))
             if (s.deepModel.isNotBlank()) {
-                put(Stage.DEEP, StageConfig(Stage.DEEP, s.deepModel.trim(), s.deepEffort, "adaptive", 8000, true, maxRetries = 1, timeoutS = 120))
+                put(Stage.DEEP, StageConfig(Stage.DEEP, s.deepModel.trim(), s.deepEffort, "adaptive", 16000, true, maxRetries = 1, timeoutS = 180))
             }
         }
-        gate.cfg.deepAfterS = if (s.deepAuto && Stage.DEEP in stages) 2.5 else 0.0
+        gate.cfg.deepAfterS = if (s.deepAuto && Stage.DEEP in stages) 1.5 else 0.0
         val backend: VisionBackend = if (s.fake) {
             ledger = null
             FakeVision(150) { Images.fakeBoxes(it) }
@@ -258,8 +259,15 @@ class CaptureService : Service(), ControlsView.Actions {
             val schema = assets.open("analysis_schema.json").reader().use { it.readText() }
             AnthropicVision(s.apiKey, Prompts.buildSystemPrompt(template, knowledge), schema, l, log = { AppLog.w(it) })
         }
-        engine = LiveEngine(scope, backend, stages, prepare = { Images.prepare(it, s.maxImageEdge, s.maxImageTokens) },
-            hint = { settings.hint }, onEvent = ::onEvent)
+        engine = LiveEngine(
+            scope,
+            backend,
+            stages,
+            prepare = { Images.prepare(it, s.maxImageEdge, s.maxImageTokens, minEdge = StenoSettings.DEFAULT_MIN_IMAGE_EDGE) },
+            hint = { settings.hint },
+            onEvent = ::onEvent,
+            context = { _, fid -> lastDeepContext?.let { (savedId, text) -> if (savedId < fid) text else "" } ?: "" },
+        )
     }
 
     // ------------------------------------------------------------------ windows
@@ -309,6 +317,7 @@ class CaptureService : Service(), ControlsView.Actions {
             overlay?.region = r
             overlay?.clear()
             gate.reset()
+            lastDeepContext = null
             AppLog.i("Bereich gewählt: $r")
             updateCapturing()
         }, onCancel = {
@@ -450,7 +459,15 @@ class CaptureService : Service(), ControlsView.Actions {
                 return
             }
         }
-        if (!failed && r.frameId >= shownFrame) {
+        if (!failed && r.stage == Stage.DEEP) {
+            val reading = r.reading()
+            val meanConf = if (r.marks.isNotEmpty()) r.marks.sumOf { it.confidence.toDouble() } / r.marks.size else 0.0
+            if (reading.isNotEmpty() && meanConf >= 0.55) {
+                lastDeepContext = r.frameId to reading
+            }
+        }
+        val downgrade = r.frameId == shownFrame && shownStage == Stage.DEEP && r.stage == Stage.FAST
+        if (!failed && r.frameId >= shownFrame && !downgrade) {
             show(r.frameId, r.stage, r.marks.toList(), r.imageWidth to r.imageHeight, r.answer, headline(r))
         }
         lastInfo = "${label(r.stage)} ${String.format(Locale.GERMANY, "%.1f", r.durationS)} s"
@@ -477,11 +494,15 @@ class CaptureService : Service(), ControlsView.Actions {
             val reading = r.reading()
             if (reading.isNotEmpty()) append("Übertragung: ").append(reading).append('\n')
             for (m in r.marks) {
+                val strokes = if (m.strokes.isNotEmpty()) " [${m.strokes}]" else ""
                 when (m.kind) {
                     MarkKind.ERROR -> append("✗ ${m.text}${if (m.intended.isNotEmpty()) " → ${m.intended}" else ""}: ${m.issue}" +
-                        (if (m.fix.isNotEmpty()) " (richtig: ${m.fix})" else "") + "\n")
+                        (if (m.fix.isNotEmpty()) " (richtig: ${m.fix})" else "") + "$strokes\n")
                     MarkKind.NOTE -> append("• ${m.text.ifEmpty { m.issue }}\n")
-                    MarkKind.WORD -> if (m.alternatives.isNotEmpty()) append("${m.text}: oder ${m.alternatives.joinToString(" / ")}\n")
+                    MarkKind.WORD -> if (m.alternatives.isNotEmpty() || m.strokes.isNotEmpty()) {
+                        val alts = if (m.alternatives.isNotEmpty()) ": oder ${m.alternatives.joinToString(" / ")}" else ""
+                        append("${m.text}$alts$strokes\n")
+                    }
                 }
             }
         }.trim()
@@ -564,6 +585,7 @@ class CaptureService : Service(), ControlsView.Actions {
         }
         region = settings.loadRegion(w, h)
         lastSig = null
+        lastDeepContext = null
         gate.reset()
         overlay?.region = region
         overlay?.clear()

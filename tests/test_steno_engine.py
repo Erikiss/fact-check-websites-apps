@@ -55,9 +55,11 @@ class ScriptedBackend:
     def __init__(self, fast_s: float = 0.0, budget_error: bool = False):
         self.fast_s, self.budget_error = fast_s, budget_error
         self.frames: list[tuple[str, int]] = []
+        self.contexts: list[tuple[str, int, str]] = []
 
-    async def analyze(self, image, stage, *, frame_id, hint="", on_mark=None):
+    async def analyze(self, image, stage, *, frame_id, hint="", context="", on_mark=None):
         self.frames.append((stage.stage, frame_id))
+        self.contexts.append((stage.stage, frame_id, context))
         if self.budget_error:
             raise BudgetExceeded("Steno-Tagesbudget erreicht")
         if stage.stage == "deep":
@@ -85,6 +87,20 @@ def test_events_flow_from_started_to_done_with_fake_vision():
         marks = rec.kinds("mark")
         assert len(marks) == len(done["result"].marks) == 2
         assert all(e["frame_id"] == 1 and e["stage"] == "fast" for e in marks)
+    finally:
+        eng.stop()
+
+
+def test_engine_forwards_context_and_min_image_edge():
+    rec = Recorder()
+    backend = ScriptedBackend()
+    eng = engine_with(backend, rec, min_image_edge=896, context_provider=lambda s, fid: f"{s}:{fid}")
+    try:
+        eng.submit(Frame(5, picture()), "fast")
+        rec.wait("done")
+        started = rec.kinds("started")[0]
+        assert started["image_size"] == (480, 180)                  # 240x90 upscaled by 2x cap
+        assert backend.contexts == [("fast", 5, "fast:5")]
     finally:
         eng.stop()
 

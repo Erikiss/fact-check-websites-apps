@@ -22,6 +22,14 @@ class CoreLogicTest {
         assertEquals(1296, ImageMath.countImageTokens(1000, 1000))
     }
 
+    @Test
+    fun targetSizeUpscalesSmallCropsGently() {
+        assertEquals(800 to 400, ImageMath.targetSize(400, 200, ImageMath.HIGH_RES_MAX_EDGE, ImageMath.HIGH_RES_MAX_TOKENS, minEdge = 896))
+        assertEquals(896 to 448, ImageMath.targetSize(600, 300, ImageMath.HIGH_RES_MAX_EDGE, ImageMath.HIGH_RES_MAX_TOKENS, minEdge = 896))
+        assertEquals(1200 to 600, ImageMath.targetSize(1200, 600, ImageMath.HIGH_RES_MAX_EDGE, ImageMath.HIGH_RES_MAX_TOKENS, minEdge = 896))
+        assertEquals(400 to 200, ImageMath.targetSize(400, 200, ImageMath.HIGH_RES_MAX_EDGE, ImageMath.HIGH_RES_MAX_TOKENS, minEdge = 0))
+    }
+
     // ------------------------------------------------------------------ item stream
     private val doc = """{"items": [
         {"box": [1, 2, 30, 40], "text": "Haus {mit} \"Klammern\" ]", "alternatives": ["Hans"], "kind": "error",
@@ -63,8 +71,9 @@ class CoreLogicTest {
     @Test
     fun markFromJsonCleansModelOutput() {
         fun parse(json: String, w: Int = 100, h: Int = 60) = Mark.fromJson(Json.mapper.readTree(json), w, h)
-        val m = parse("""{"box": [50, 80, 10, -5], "text": " Haus ", "alternatives": ["Haus", "Hans", " "], "kind": "error", "confidence": 3, "spot": [500, 10]}""")!!
+        val m = parse("""{"box": [50, 80, 10, -5], "strokes": " h + a-hoch/verst. + s ", "text": " Haus ", "alternatives": ["Haus", "Hans", " "], "kind": "error", "confidence": 3, "spot": [500, 10]}""")!!
         assertEquals(Box(10f, 0f, 50f, 60f), m.box)
+        assertEquals("h + a-hoch/verst. + s", m.strokes)
         assertEquals(listOf("Hans"), m.alternatives)
         assertEquals(1f, m.confidence)
         assertEquals(100f to 10f, m.spot)
@@ -164,13 +173,20 @@ class CoreLogicTest {
     fun systemPromptIsBuiltFromTheSharedFiles() {
         val prompt = Prompts.buildSystemPrompt(resource("system_prompt.md"), resource("dek.md"))
         assertTrue(prompt.startsWith("Du bist ein Live-Assistent für deutsche Kurzschrift"))
-        assertTrue("# DEK-Wissen" in prompt && "Verstärkung" in prompt && "[x1, y1, x2, y2]" in prompt)
+        assertTrue("# DEK-Wissen" in prompt && "Verstärkung" in prompt && "| ä (" in prompt && "[x1, y1, x2, y2]" in prompt)
         assertFalse("{knowledge}" in prompt || "<!--" in prompt || "STENO_KNOWLEDGE_FILE" in prompt)
         assertEquals(prompt, Prompts.buildSystemPrompt(resource("system_prompt.md"), resource("dek.md")))
         assertEquals("Bildgröße: 640×480 Pixel.", Prompts.buildUserText(640, 480))
         assertEquals("Bildgröße: 640×480 Pixel.\nHinweis des Nutzers: Finde den Fehler", Prompts.buildUserText(640, 480, " Finde den Fehler "))
+        val withCtx = Prompts.buildUserText(640, 480, "", "  Der Kurs   schreibt heute  ")
+        assertTrue(withCtx.endsWith("Vorheriger Bildausschnitt (nur Themenkontext, nicht blind übernehmen): Der Kurs schreibt heute"))
+        val truncated = Prompts.buildUserText(640, 480, "", "Wort ".repeat(60))
+        assertTrue(truncated.endsWith("…"))
+        assertTrue(truncated.substringAfterLast(": ").length <= Prompts.MAX_CONTEXT_CHARS)
         val schema = Json.mapper.readTree(resource("analysis_schema.json"))
         assertEquals("object", schema.path("type").asText())
+        val itemProps = schema.path("properties").path("items").path("items").path("properties").fieldNames().asSequence().toList()
+        assertTrue("strokes" in itemProps && itemProps.indexOf("strokes") < itemProps.indexOf("text"))
         assertFalse(listOf("minimum", "maximum", "minItems", "maxItems").any { it in schema.toString() })
     }
 

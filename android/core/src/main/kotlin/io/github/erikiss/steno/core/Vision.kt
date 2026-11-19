@@ -77,7 +77,14 @@ object ModelRules {
 
 interface VisionBackend {
     /** Analyse one image; [onMark] is called (on any thread) as soon as each mark is complete. */
-    suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, onMark: (Mark) -> Unit): StenoResult
+    suspend fun analyze(
+        image: PreparedImage,
+        stage: StageConfig,
+        frameId: Long,
+        hint: String,
+        context: String = "",
+        onMark: (Mark) -> Unit,
+    ): StenoResult
 }
 
 /** Short German message for the status line (most specific SDK error first). */
@@ -137,7 +144,7 @@ class AnthropicVision(
 
     fun usesFallbacks(stage: StageConfig) = stage.fallbacks && fallbacksOk && ModelRules.supportsFallbacks(stage.model)
 
-    fun buildParams(image: PreparedImage, stage: StageConfig, hint: String): MessageCreateParams {
+    fun buildParams(image: PreparedImage, stage: StageConfig, hint: String, context: String = ""): MessageCreateParams {
         val output = OutputConfig.builder()
             .format(JsonOutputFormat.builder().schema(JsonOutputFormat.Schema.builder().putAllAdditionalProperties(schema).build()).build())
             .apply { if (ModelRules.supportsEffort(stage.model)) effort(OutputConfig.Effort.of(stage.effort)) }
@@ -153,7 +160,7 @@ class AnthropicVision(
                         .data(Base64.getEncoder().encodeToString(image.png))
                         .mediaType(Base64ImageSource.MediaType.IMAGE_PNG)
                         .build()).build()),
-                ContentBlockParam.ofText(Prompts.buildUserText(image.width, image.height, hint)),
+                ContentBlockParam.ofText(Prompts.buildUserText(image.width, image.height, hint, context)),
             ))
             .outputConfig(output)
         when (ModelRules.thinking(stage.model, stage.thinking, stage.effort)) {
@@ -169,7 +176,14 @@ class AnthropicVision(
         return b.build()
     }
 
-    override suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, onMark: (Mark) -> Unit): StenoResult {
+    override suspend fun analyze(
+        image: PreparedImage,
+        stage: StageConfig,
+        frameId: Long,
+        hint: String,
+        context: String,
+        onMark: (Mark) -> Unit,
+    ): StenoResult {
         val worst = Pricing.worstCase(stage.model, systemTokens + image.tokens + 200, stage.maxTokens)
         ledger.reserve(worst, stage.stage)                         // throws BudgetExceeded before spending anything
         val result = StenoResult(frameId, stage.stage, stage.model, image.width, image.height, image.tokens)
@@ -179,7 +193,7 @@ class AnthropicVision(
         fun seconds() = (System.nanoTime() - t0) / 1e9
         var final: Message? = null
         try {
-            var params = buildParams(image, stage, hint)
+            var params = buildParams(image, stage, hint, context)
             while (true) {
                 try {
                     final = stream(params, stage, image, parser, result, started, onMark, ::seconds)
@@ -188,7 +202,7 @@ class AnthropicVision(
                     if (usesFallbacks(stage) && e.message.orEmpty().contains("fallback", ignoreCase = true) && parser.text.isEmpty()) {
                         log("Refusal-Fallback vom Server abgelehnt – ohne weiter: ${e.message}")
                         fallbacksOk = false
-                        params = buildParams(image, stage, hint)
+                        params = buildParams(image, stage, hint, context)
                         continue
                     }
                     throw e
@@ -324,7 +338,14 @@ object InkBoxes {
 
 /** Deterministic $0 stand-in (fake mode): labels ink blobs, streaming them with small delays. */
 class FakeVision(private val delayMs: Long = 150, private val boxFinder: (PreparedImage) -> List<Box>) : VisionBackend {
-    override suspend fun analyze(image: PreparedImage, stage: StageConfig, frameId: Long, hint: String, onMark: (Mark) -> Unit): StenoResult {
+    override suspend fun analyze(
+        image: PreparedImage,
+        stage: StageConfig,
+        frameId: Long,
+        hint: String,
+        context: String,
+        onMark: (Mark) -> Unit,
+    ): StenoResult {
         val t0 = System.nanoTime()
         val result = StenoResult(frameId, stage.stage, "fake:${stage.model}", image.width, image.height, image.tokens)
         result.servedBy = "fake"

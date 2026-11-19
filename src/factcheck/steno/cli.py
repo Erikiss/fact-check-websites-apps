@@ -40,7 +40,8 @@ async def analyse_image(settings: Settings, path: Path, stages: list[StageConfig
                         hint: str, out: Path | None) -> int:
     """Run each stage on one picture, streaming marks to stdout; returns the number of failed stages."""
     picture = Image.open(path)
-    prepared = prepare_image(picture, settings.steno_max_image_edge, settings.steno_max_image_tokens)
+    prepared = prepare_image(picture, settings.steno_max_image_edge, settings.steno_max_image_tokens,
+                             min_edge=settings.steno_min_image_edge)
     print(f"Bild {picture.width}×{picture.height} px -> Modell sieht {prepared.width}×{prepared.height} px "
           f"({prepared.tokens} Bild-Tokens)")
     failures = 0

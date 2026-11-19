@@ -37,9 +37,9 @@ class VisionTest {
     private lateinit var ledgerFile: File
 
     private val doc = """{"items": [
-        {"box": [10, 10, 60, 50], "text": "und", "alternatives": [], "kind": "word", "issue": "", "intended": "",
+        {"box": [10, 10, 60, 50], "strokes": "Kürzel und", "text": "und", "alternatives": [], "kind": "word", "issue": "", "intended": "",
          "fix": "", "spot": [], "confidence": 0.9},
-        {"box": [80, 10, 150, 60], "text": "Hans", "alternatives": ["Hanse"], "kind": "error", "issue": "Verstärkung fehlt",
+        {"box": [80, 10, 150, 60], "strokes": "h + au-tief + s", "text": "Hans", "alternatives": ["Hanse"], "kind": "error", "issue": "Verstärkung fehlt",
          "intended": "Haus", "fix": "au: tief + verstärkt", "spot": [100, 30], "confidence": 0.5}
     ], "answer": "Hans statt Haus: Verstärkung fehlt."}"""
 
@@ -100,7 +100,7 @@ class VisionTest {
         responders.add(sse(doc, model = "claude-opus-5-5"))
         runBlocking {
             v.analyze(image, fast, 1, "Finde den Fehler") {}
-            v.analyze(image, deep, 2, "") {}
+            v.analyze(image, deep, 2, "", "Vorheriger Satz") {}
         }
         val (fastHeaders, f) = requests[0]
         assertEquals("claude-haiku-5-5", f.path("model").asText())
@@ -122,6 +122,7 @@ class VisionTest {
         assertEquals("adaptive", d.path("thinking").path("type").asText())
         assertEquals("default", d.path("fallbacks").asText())
         assertTrue(deepHeaders["anthropic-beta"].orEmpty().any { ModelRules.FALLBACK_BETA in it })
+        assertTrue("Vorheriger Satz" in d.path("messages")[0].path("content")[1].path("text").asText())
     }
 
     @Test
@@ -130,6 +131,7 @@ class VisionTest {
         val seen = ArrayList<Mark>()
         val result = runBlocking { vision().analyze(image, fast, 7, "") { seen.add(it) } }
         assertEquals(listOf("und", "Hans"), seen.map { it.text })
+        assertEquals(listOf("Kürzel und", "h + au-tief + s"), seen.map { it.strokes })
         assertEquals(seen, result.marks)
         assertEquals("Hans statt Haus: Verstärkung fehlt.", result.answer)
         assertNull(result.error)

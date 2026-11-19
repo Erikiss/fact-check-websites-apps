@@ -39,6 +39,7 @@ class LiveEngine<T>(
     private val onEvent: (EngineEvent) -> Unit,
     private val maxInflightFast: Int = 2,
     private val prepareDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val context: (Stage, Long) -> String = { _, _ -> "" },
 ) {
     private val running = mapOf(Stage.FAST to LinkedHashMap<Job, Long>(), Stage.DEEP to LinkedHashMap<Job, Long>())
     private var pendingFast: Frame<T>? = null
@@ -87,7 +88,7 @@ class LiveEngine<T>(
         try {
             val prepared = withContext(prepareDispatcher) { prepare(frame.image) }
             emit(EngineEvent.Started(frame.id, stage, cfg.model, prepared.width, prepared.height))
-            val result = backend.analyze(prepared, cfg, frame.id, hint()) { mark ->
+            val result = backend.analyze(prepared, cfg, frame.id, hint(), context(stage, frame.id)) { mark ->
                 emit(EngineEvent.MarkAdded(frame.id, stage, mark))
             }
             emit(EngineEvent.Done(frame.id, stage, result))

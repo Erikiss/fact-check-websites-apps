@@ -11,11 +11,12 @@ and — for false or cherry-picked claims — a sourced correction.
 
 A second tool in this repo for German shorthand (DEK) courses on WebEx and similar: pick a screen region once
 (the whiteboard or shared slide), and a click-through overlay shows, live, what the shorthand says, which strokes
-look wrong (and why), how they should be written, and alternative readings. A fast model (Claude Haiku 5.5) reads
-every new picture as soon as the lecturer stops drawing, streaming marks onto the screen as they arrive; a stronger
-model (Claude Opus 5.5) takes a second look once the picture stays still. Change detection runs locally, the
-overlay is hidden from screen captures on Windows, and every call goes through the project's spend ledger with a
-daily cap. Needs `ANTHROPIC_API_KEY` in `.env`; `uv run factcheck-steno --fake` runs the UI at $0.
+look wrong (and why), how they should be written, and alternative readings. A fast stage (Claude Sonnet 5.5 with
+adaptive thinking) reads every new picture as soon as the lecturer stops drawing, streaming marks onto the screen as
+they arrive; a deeper stage (Claude Opus 5.5 at high effort) takes a thorough second look once the picture stays still.
+Change detection runs locally, the overlay is hidden from screen captures on Windows, and every call goes through the
+project's spend ledger with a daily cap. Needs `ANTHROPIC_API_KEY` in `.env`; `uv run factcheck-steno --fake` runs the
+UI at $0.
 Guide (German): [`docs/steno-live.md`](docs/steno-live.md). The same live analysis also runs on Android tablets as
 a standalone app (`android/`, guide: [`docs/steno-android.md`](docs/steno-android.md)); both share the prompt, the
 DEK knowledge and the output schema in `src/factcheck/steno/knowledge/`.

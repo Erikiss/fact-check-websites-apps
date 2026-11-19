@@ -53,6 +53,16 @@ def resized_size(width: int, height: int, max_edge: int = STANDARD_TIER[0],
     return lo, max(round(lo / aspect), 1)
 
 
+def target_size(width: int, height: int, max_edge: int = STANDARD_TIER[0], max_tokens: int = STANDARD_TIER[1],
+                min_edge: int = 0, max_upscale: float = 2.0) -> tuple[int, int]:
+    """Target size for the model: gently upscale very small crops (up to `max_upscale`), then clamp to API limits."""
+    long_edge = max(width, height)
+    if min_edge > 0 and 0 < long_edge < min_edge and max_upscale > 1.0:
+        scale = min(max_upscale, min_edge / long_edge)
+        width, height = max(1, round(width * scale)), max(1, round(height * scale))
+    return resized_size(width, height, max_edge, max_tokens)
+
+
 @dataclass(frozen=True)
 class PreparedImage:
     """The exact image the model sees, plus the size of the capture it came from."""
@@ -71,14 +81,14 @@ class PreparedImage:
 
 
 def prepare_image(image: Image.Image, max_edge: int = STANDARD_TIER[0], max_tokens: int = STANDARD_TIER[1],
-                  compress_level: int = 3) -> PreparedImage:
+                  compress_level: int = 3, min_edge: int = 0) -> PreparedImage:
     """Resize (if needed) to fit the limits and encode as PNG.
 
     PNG keeps thin pen strokes intact (JPEG artefacts hurt line drawings); a low zlib level keeps encoding
     fast, and mostly-white whiteboards compress well anyway.
     """
     rgb = image.convert("RGB")
-    w, h = resized_size(rgb.width, rgb.height, max_edge, max_tokens)
+    w, h = target_size(rgb.width, rgb.height, max_edge, max_tokens, min_edge=min_edge)
     sent = rgb if (w, h) == rgb.size else rgb.resize((w, h), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     sent.save(buf, format="PNG", compress_level=compress_level)

@@ -64,10 +64,10 @@ class StageConfig:
 def stages_from_settings(s: Settings) -> dict[str, StageConfig]:
     """The fast stage always; the deep stage only if STENO_DEEP_MODEL is set."""
     stages = {"fast": StageConfig("fast", s.steno_fast_model, s.steno_fast_effort, s.steno_fast_thinking,
-                                  s.steno_fast_max_tokens, s.steno_fallbacks, max_retries=0, timeout_s=30.0)}
+                                  s.steno_fast_max_tokens, s.steno_fallbacks, max_retries=0, timeout_s=45.0)}
     if s.steno_deep_model.strip():
         stages["deep"] = StageConfig("deep", s.steno_deep_model.strip(), s.steno_deep_effort, s.steno_deep_thinking,
-                                     s.steno_deep_max_tokens, s.steno_fallbacks, max_retries=1, timeout_s=120.0)
+                                     s.steno_deep_max_tokens, s.steno_fallbacks, max_retries=1, timeout_s=180.0)
     return stages
 
 
@@ -126,7 +126,7 @@ class VisionBackend(Protocol):
     auth: str
 
     async def analyze(self, image: PreparedImage, stage: StageConfig, *, frame_id: int, hint: str = "",
-                      on_mark: MarkCallback | None = None) -> StenoResult: ...
+                      context: str = "", on_mark: MarkCallback | None = None) -> StenoResult: ...
 
 
 class StenoBudget:
@@ -182,12 +182,12 @@ class AnthropicVision:
         self._fallbacks_ok = True                  # switched off for the session if the API rejects the beta
         llm_event("steno_system_prompt", "-", text=self.system_prompt)
 
-    def build_request(self, image: PreparedImage, stage: StageConfig, hint: str) -> dict[str, Any]:
+    def build_request(self, image: PreparedImage, stage: StageConfig, hint: str, context: str = "") -> dict[str, Any]:
         """Keyword arguments for `client.messages.stream(...)`."""
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                          "data": base64.standard_b64encode(image.png).decode("ascii")}},
-            {"type": "text", "text": build_user_text(image.width, image.height, hint)},
+            {"type": "text", "text": build_user_text(image.width, image.height, hint, context)},
         ]
         kwargs: dict[str, Any] = {
             "model": stage.model,
@@ -213,7 +213,7 @@ class AnthropicVision:
         return str(path)
 
     async def analyze(self, image: PreparedImage, stage: StageConfig, *, frame_id: int, hint: str = "",
-                      on_mark: MarkCallback | None = None) -> StenoResult:
+                      context: str = "", on_mark: MarkCallback | None = None) -> StenoResult:
         """Stream one analysis; raises BudgetExceeded before spending anything if a cap would be broken."""
         worst = worst_case_usd(stage.model, self._system_tokens + image.tokens + 200, stage.max_tokens)
         self.budget.check(stage.stage, worst)
@@ -222,8 +222,9 @@ class AnthropicVision:
         run_id = uuid.uuid4().hex[:10]
         result = StenoResult(frame_id=frame_id, stage=stage.stage, model=stage.model, image_width=image.width,
                              image_height=image.height, image_tokens=image.tokens)
-        kwargs = self.build_request(image, stage, hint)
+        kwargs = self.build_request(image, stage, hint, context)
         llm_event("steno_request", run_id, stage=stage.stage, model=stage.model, frame_id=frame_id, hint=hint,
+                  context=context,
                   image={"width": image.width, "height": image.height, "tokens": image.tokens, "sha1": image.sha1,
                          "path": self._save_frame(run_id, image)},
                   thinking=kwargs.get("thinking"), effort=kwargs["output_config"].get("effort"),
@@ -378,7 +379,7 @@ class FakeVision:
         self.delay_s = delay_s
 
     async def analyze(self, image: PreparedImage, stage: StageConfig, *, frame_id: int, hint: str = "",
-                      on_mark: MarkCallback | None = None) -> StenoResult:
+                      context: str = "", on_mark: MarkCallback | None = None) -> StenoResult:
         t0 = time.monotonic()
         gray = np.asarray(Image.open(io.BytesIO(image.png)).convert("L"))
         boxes = find_ink_boxes(gray)[:12]

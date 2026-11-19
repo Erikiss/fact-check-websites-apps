@@ -34,9 +34,17 @@ def build_system_prompt(knowledge: str) -> str:
     return SYSTEM_TEMPLATE.replace("{knowledge}", knowledge.strip())
 
 
-def build_user_text(width: int, height: int, hint: str = "") -> str:
+MAX_CONTEXT_CHARS = 160
+
+
+def build_user_text(width: int, height: int, hint: str = "", context: str = "") -> str:
     """Per-frame text sent after the image (kept out of the cached system prompt)."""
     text = f"Bildgröße: {width}×{height} Pixel."
     if hint.strip():
         text += f"\nHinweis des Nutzers: {hint.strip()}"
+    ctx = " ".join(context.split())
+    if ctx:
+        if len(ctx) > MAX_CONTEXT_CHARS:
+            ctx = ctx[:MAX_CONTEXT_CHARS - 1].rstrip() + "…"
+        text += f"\nVorheriger Bildausschnitt (nur Themenkontext, nicht blind übernehmen): {ctx}"
     return text

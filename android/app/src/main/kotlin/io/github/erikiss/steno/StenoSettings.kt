@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import io.github.erikiss.steno.core.ImageMath
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -15,7 +16,41 @@ import kotlin.reflect.KProperty
 
 /** App settings (SharedPreferences); the API key is stored encrypted with a key that never leaves the Keystore. */
 class StenoSettings(context: Context) {
+    companion object {
+        const val DEFAULT_FAST_MODEL = "claude-sonnet-5-5"
+        const val DEFAULT_DEEP_MODEL = "claude-opus-5-5"
+        const val DEFAULT_FAST_EFFORT = "low"
+        const val DEFAULT_FAST_THINKING = "adaptive"
+        const val DEFAULT_DEEP_EFFORT = "high"
+        const val DEFAULT_MAX_IMAGE_EDGE = ImageMath.HIGH_RES_MAX_EDGE
+        const val DEFAULT_MAX_IMAGE_TOKENS = ImageMath.HIGH_RES_MAX_TOKENS
+        const val DEFAULT_MIN_IMAGE_EDGE = 896
+        private const val CURRENT_PREFS_VERSION = 2
+        val VALID_EFFORTS = setOf("low", "medium", "high", "xhigh", "max")
+    }
+
     private val prefs = context.getSharedPreferences("steno", Context.MODE_PRIVATE)
+
+    init {
+        migrate()
+    }
+
+    private fun migrate() {
+        if (prefs.getInt("prefs_version", 1) >= CURRENT_PREFS_VERSION) return
+        val edit = prefs.edit()
+        // Upgrade untouched v1 defaults so existing installs get the accuracy improvements automatically.
+        if (prefs.getString("fast_model", null) == "claude-haiku-5-5") {
+            edit.putString("fast_model", DEFAULT_FAST_MODEL)
+        }
+        if (prefs.getString("deep_effort", null) == "low") {
+            edit.putString("deep_effort", DEFAULT_DEEP_EFFORT)
+        }
+        if (prefs.contains("max_image_tokens") && prefs.getInt("max_image_tokens", 0) == ImageMath.STANDARD_MAX_TOKENS) {
+            edit.putInt("max_image_tokens", DEFAULT_MAX_IMAGE_TOKENS)
+            edit.putInt("max_image_edge", DEFAULT_MAX_IMAGE_EDGE)
+        }
+        edit.putInt("prefs_version", CURRENT_PREFS_VERSION).apply()
+    }
 
     var apiKey: String
         get() = prefs.getString("api_key", null)?.let { KeyCrypto.decrypt(it) } ?: ""
@@ -25,16 +60,17 @@ class StenoSettings(context: Context) {
 
     var hint by string("hint", "")
     var extraKnowledge by string("extra_knowledge", "")
-    var fastModel by string("fast_model", "claude-haiku-5-5")
-    var deepModel by string("deep_model", "claude-opus-5-5")     // empty = no deep stage
-    var fastEffort by string("fast_effort", "low")
-    var deepEffort by string("deep_effort", "low")
+    var fastModel by string("fast_model", DEFAULT_FAST_MODEL)
+    var deepModel by string("deep_model", DEFAULT_DEEP_MODEL)     // empty = no deep stage
+    var fastEffort by string("fast_effort", DEFAULT_FAST_EFFORT)
+    var fastThinking by string("fast_thinking", DEFAULT_FAST_THINKING)
+    var deepEffort by string("deep_effort", DEFAULT_DEEP_EFFORT)
     var deepAuto by boolean("deep_auto", true)
     var fake by boolean("fake", false)
     var dailyBudget by double("daily_budget", 20.0)
     var totalBudget by double("total_budget", 100.0)
-    var maxImageEdge by int("max_image_edge", 1568)
-    var maxImageTokens by int("max_image_tokens", 1568)
+    var maxImageEdge by int("max_image_edge", DEFAULT_MAX_IMAGE_EDGE)
+    var maxImageTokens by int("max_image_tokens", DEFAULT_MAX_IMAGE_TOKENS)
 
     /** The watched region in screen pixels, remembered per screen size (i.e. per orientation). */
     fun loadRegion(screenW: Int, screenH: Int): Rect? {

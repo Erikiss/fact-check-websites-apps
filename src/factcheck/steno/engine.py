@@ -41,15 +41,18 @@ class Frame:
 
 class LiveEngine:
     def __init__(self, backend: VisionBackend, stages: dict[str, StageConfig], *, on_event: EventCallback,
-                 max_image_edge: int = 1568, max_image_tokens: int = 1568, max_inflight_fast: int = 2,
-                 hint_provider: Callable[[], str] = lambda: ""):
+                 max_image_edge: int = 1568, max_image_tokens: int = 1568, min_image_edge: int = 0,
+                 max_inflight_fast: int = 2, hint_provider: Callable[[], str] = lambda: "",
+                 context_provider: Callable[[str, int], str] = lambda _s, _f: ""):
         self.backend = backend
         self.stages = stages
         self.on_event = on_event
         self.max_image_edge = max_image_edge
         self.max_image_tokens = max_image_tokens
+        self.min_image_edge = min_image_edge
         self.max_inflight_fast = max(1, max_inflight_fast)
         self.hint_provider = hint_provider
+        self.context_provider = context_provider
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._running: dict[str, dict[asyncio.Task, int]] = {"fast": {}, "deep": {}}   # task -> frame id
@@ -138,11 +141,12 @@ class LiveEngine:
         cfg = self.stages[stage]
         fid = frame.frame_id
         try:
-            prepared = await asyncio.to_thread(prepare_image, frame.image, self.max_image_edge, self.max_image_tokens)
+            prepared = await asyncio.to_thread(prepare_image, frame.image, self.max_image_edge, self.max_image_tokens,
+                                               min_edge=self.min_image_edge)
             self._emit({"type": "started", "frame_id": fid, "stage": stage, "model": cfg.model,
                         "image_size": (prepared.width, prepared.height)})
             result = await self.backend.analyze(
-                prepared, cfg, frame_id=fid, hint=self.hint_provider(),
+                prepared, cfg, frame_id=fid, hint=self.hint_provider(), context=self.context_provider(stage, fid),
                 on_mark=lambda m: self._emit({"type": "mark", "frame_id": fid, "stage": stage, "mark": m}))
         except asyncio.CancelledError:
             self._emit({"type": "cancelled", "frame_id": fid, "stage": stage})

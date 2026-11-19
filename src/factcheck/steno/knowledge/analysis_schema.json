@@ -13,6 +13,10 @@
             },
             "description": "[x1, y1, x2, y2] in pixels of the image, tight around the sign/word"
           },
+          "strokes": {
+            "type": "string",
+            "description": "brief left-to-right DEK glyph/vowel breakdown or Kürzel name before reading, e.g. 'Kürzel r auf Oberlinie' or 'h + eng/tief/verst.(au) + s'"
+          },
           "text": {
             "type": "string",
             "description": "longhand reading of what is actually written"
@@ -53,6 +57,7 @@
         },
         "required": [
           "box",
+          "strokes",
           "text",
           "alternatives",
           "kind",

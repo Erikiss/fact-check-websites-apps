@@ -35,6 +35,7 @@ class Mark(BaseModel):
 
     kind: MarkKind
     box: tuple[float, float, float, float] | None = None
+    strokes: str = ""
     text: str = ""
     alternatives: list[str] = []
     issue: str = ""
@@ -61,6 +62,7 @@ class Mark(BaseModel):
         s = raw.get("spot")
         if isinstance(s, list) and len(s) == 2 and all(isinstance(v, (int, float)) for v in s):
             spot = (_clip(float(s[0]), 0, width), _clip(float(s[1]), 0, height))
+        strokes = str(raw.get("strokes") or "").strip()
         text = str(raw.get("text") or "").strip()
         issue = str(raw.get("issue") or "").strip()
         if box is None and not text and not issue:
@@ -70,7 +72,7 @@ class Mark(BaseModel):
             conf = _clip(float(raw.get("confidence", 0.5)), 0.0, 1.0)
         except (TypeError, ValueError):
             conf = 0.5
-        return cls(kind=kind, box=box, text=text, alternatives=alts[:3], issue=issue,
+        return cls(kind=kind, box=box, strokes=strokes, text=text, alternatives=alts[:3], issue=issue,
                    intended=str(raw.get("intended") or "").strip(), fix=str(raw.get("fix") or "").strip(),
                    spot=spot, confidence=conf)
 

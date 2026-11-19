@@ -3,8 +3,9 @@
 Dieselbe Live-Analyse wie am PC (`factcheck-steno`), direkt auf dem Tablet: Steno-Live nimmt den Bildschirm auf,
 während WebEx läuft, liest die Kurzschrift im gewählten Bereich und zeichnet Übertragung, Fehler und Alternativen
 über die WebEx-App. Prompt, DEK-Wissen und Antwortformat sind exakt dieselben wie am PC (gemeinsame Dateien in
-`src/factcheck/steno/knowledge/`), ebenso die beiden Stufen: ⚡ Claude Haiku 5.5 für jedes neue Bild, 🔍 Claude Opus 5.5
-für eine zweite Meinung, sobald das Bild still steht.
+`src/factcheck/steno/knowledge/`), ebenso die beiden Stufen: ⚡ Claude Sonnet 5.5 (mit kurzer Denkpause) für jedes
+neue Bild, 🔍 Claude Opus 5.5 (effort `high`) für eine gründliche Zeichen-für-Zeichen-Prüfung, sobald das Bild
+1,5 s still steht – standardmäßig mit hoher Bildauflösung (`4784` Bild-Tokens).
 
 Für Android 10 und neuer (z. B. Galaxy Tab S6 Lite).
 

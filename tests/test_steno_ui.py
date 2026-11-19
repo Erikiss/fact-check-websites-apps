@@ -100,7 +100,7 @@ def test_live_loop_draws_fast_then_deep(qapp, settings, excluded):
         live.excluded = excluded
         assert wait_until(lambda: live._shown_stage == "fast" and len(live.overlay.marks) == 3)
         assert wait_until(lambda: live._shown_stage == "deep" and live.overlay.answer.startswith("FAKE"))
-        assert live.overlay.image_size == (400, 200)
+        assert live.overlay.image_size == (800, 400)                         # 400x200 gently upscaled (2x)
         assert "deep" in live.panel.latest and "fast" in live.panel.latest
         live.set_live(False)
         assert live.overlay.status == "⏸ pausiert" and live.controls.live_button.text() == "▶ Live"

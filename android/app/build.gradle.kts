@@ -13,8 +13,8 @@ android {
         applicationId = "io.github.erikiss.steno"
         minSdk = 29                  // Android 10: MediaProjection foreground-service type, Galaxy Tab S6 Lite
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     signingConfigs {

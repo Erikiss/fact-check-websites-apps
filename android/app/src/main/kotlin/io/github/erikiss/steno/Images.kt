@@ -72,8 +72,8 @@ object Images {
     }
 
     /** Scale to the API's image limits (so model pixel boxes map 1:1) and encode as PNG (keeps thin strokes). */
-    fun prepare(bitmap: Bitmap, maxEdge: Int, maxTokens: Int): PreparedImage {
-        val (w, h) = ImageMath.resizedSize(bitmap.width, bitmap.height, maxEdge, maxTokens)
+    fun prepare(bitmap: Bitmap, maxEdge: Int, maxTokens: Int, minEdge: Int = 0): PreparedImage {
+        val (w, h) = ImageMath.targetSize(bitmap.width, bitmap.height, maxEdge, maxTokens, minEdge = minEdge)
         val sent = if (w == bitmap.width && h == bitmap.height) bitmap else Bitmap.createScaledBitmap(bitmap, w, h, true)
         val out = ByteArrayOutputStream()
         sent.compress(Bitmap.CompressFormat.PNG, 100, out)

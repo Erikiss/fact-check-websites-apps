@@ -195,14 +195,16 @@ def result_html(result: StenoResult) -> str:
     for m in result.marks:
         alts = f" <span style='color:#888'>(oder: {e(' / '.join(m.alternatives))})</span>" if m.alternatives else ""
         conf = f" <span style='color:#888'>{round(m.confidence * 100)}%</span>"
+        strokes = f" <span style='color:#666'>[{e(m.strokes)}]</span>" if m.strokes else ""
         if m.kind == "error":
             detail = " – ".join(e(x) for x in (m.issue, f"richtig: {m.fix}" if m.fix else "") if x)
             meant = f" → {e(m.intended)}" if m.intended else ""
-            items.append(f"<li style='color:#d93025'><b>✗ {e(m.text or '?')}{meant}</b>{conf}<br>{detail}{alts}</li>")
+            items.append(f"<li style='color:#d93025'><b>✗ {e(m.text or '?')}{meant}</b>{conf}{strokes}"
+                         f"<br>{detail}{alts}</li>")
         elif m.kind == "note":
             items.append(f"<li style='color:#b06000'>{e(m.text or m.issue)}</li>")
         else:
-            items.append(f"<li>{e(m.text or '?')}{conf}{alts}</li>")
+            items.append(f"<li>{e(m.text or '?')}{conf}{strokes}{alts}</li>")
     if items:
         parts.append("<ul style='margin-top:2px'>" + "".join(items) + "</ul>")
     return "".join(parts)

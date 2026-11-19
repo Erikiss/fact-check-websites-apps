@@ -26,6 +26,7 @@ data class Mark(
     val fix: String = "",
     val spot: Pair<Float, Float>? = null,
     val confidence: Float = 0.5f,
+    val strokes: String = "",
 ) {
     companion object {
         private fun str(node: JsonNode, key: String): String =
@@ -55,7 +56,8 @@ data class Mark(
                 .filter { it.isNotEmpty() && it != text }
                 .take(3)
             val conf = node.get("confidence")?.takeIf { it.isNumber }?.asDouble()?.toFloat()?.coerceIn(0f, 1f) ?: 0.5f
-            return Mark(kind, box, text, alts, issue, str(node, "intended"), str(node, "fix"), spot, conf)
+            return Mark(kind, box, text, alts, issue, str(node, "intended"), str(node, "fix"), spot, conf,
+                str(node, "strokes"))
         }
     }
 }

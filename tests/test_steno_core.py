@@ -11,11 +11,11 @@ import pytest
 from PIL import Image
 
 from factcheck.steno.frames import ChangeGate, GateConfig, Trigger, changed_fraction, signature
-from factcheck.steno.imaging import HIGH_RES_TIER, count_image_tokens, prepare_image, resized_size
+from factcheck.steno.imaging import HIGH_RES_TIER, count_image_tokens, prepare_image, resized_size, target_size
 from factcheck.steno.jsonstream import ItemStream
 from factcheck.steno.layout import Rect, label_lines, place_labels
 from factcheck.steno.models import ANALYSIS_SCHEMA, Mark, StenoResult
-from factcheck.steno.prompts import build_system_prompt, build_user_text, load_knowledge
+from factcheck.steno.prompts import MAX_CONTEXT_CHARS, build_system_prompt, build_user_text, load_knowledge
 from factcheck.steno.render import format_mark, render_annotated
 from factcheck.steno.ui.winapi import MOD_ALT, MOD_CONTROL, MOD_SHIFT, parse_hotkey, qt_sequence
 
@@ -27,6 +27,15 @@ def test_resized_size_matches_vision_docs_examples():
     assert resized_size(1920, 1080, *HIGH_RES_TIER) == (1920, 1080)
     assert resized_size(1000, 1000) == (1000, 1000)          # fits: unchanged
     assert count_image_tokens(1000, 1000) == 1296
+
+
+def test_target_size_and_prepare_image_upscale_small_crops():
+    assert target_size(400, 200, *HIGH_RES_TIER, min_edge=896) == (800, 400)     # capped at 2x
+    assert target_size(600, 300, *HIGH_RES_TIER, min_edge=896) == (896, 448)
+    assert target_size(1200, 600, *HIGH_RES_TIER, min_edge=896) == (1200, 600)   # already large enough
+    assert target_size(400, 200, *HIGH_RES_TIER, min_edge=0) == (400, 200)
+    prep = prepare_image(Image.new("RGB", (400, 200), "white"), *HIGH_RES_TIER, min_edge=896)
+    assert (prep.width, prep.height) == (800, 400) and prep.scale_to_source() == (0.5, 0.5)
 
 
 def test_prepare_image_fits_limits_and_maps_back():
@@ -151,9 +160,11 @@ def test_gate_rebase_accepts_overlay_repaint_without_trigger():
 
 # ------------------------------------------------------------------------------------------------ models
 def test_mark_from_raw_cleans_model_output():
-    m = Mark.from_raw({"box": [50, 80, 10, -5], "text": " Haus ", "alternatives": ["Haus", "Hans", " "],
-                       "kind": "error", "confidence": 3, "spot": [500, 10]}, width=100, height=60)
+    m = Mark.from_raw({"box": [50, 80, 10, -5], "strokes": " h + a-hoch/verst. + s ", "text": " Haus ",
+                       "alternatives": ["Haus", "Hans", " "], "kind": "error", "confidence": 3,
+                       "spot": [500, 10]}, width=100, height=60)
     assert m.box == (10.0, 0.0, 50.0, 60.0)                     # sorted and clamped
+    assert m.strokes == "h + a-hoch/verst. + s"
     assert m.alternatives == ["Hans"] and m.confidence == 1.0 and m.spot == (100.0, 10.0)
     assert Mark.from_raw({"box": [5, 5, 5, 9], "text": "x", "kind": "word"}, 100, 60).box is None
     assert Mark.from_raw({"box": [], "text": "", "kind": "weird"}, 100, 60) is None
@@ -166,12 +177,14 @@ def test_schema_uses_only_supported_constraints():
         assert unsupported not in text
     item = ANALYSIS_SCHEMA["properties"]["items"]["items"]
     assert set(item["required"]) == set(item["properties"]) and item["additionalProperties"] is False
+    keys = list(item["properties"])
+    assert "strokes" in keys and keys.index("strokes") < keys.index("text")
 
 
 # ----------------------------------------------------------------------------------------------- prompts
 def test_system_prompt_is_static_and_includes_knowledge(tmp_path):
     knowledge = load_knowledge()
-    assert "Verstärkung" in knowledge and "Wiener Urkunde" in knowledge
+    assert "Verstärkung" in knowledge and "Wiener Urkunde" in knowledge and "| ä (" in knowledge
     assert knowledge.startswith("# DEK-Wissen") and "STENO_KNOWLEDGE_FILE" not in knowledge   # editor notes dropped
     a, b = build_system_prompt(knowledge), build_system_prompt(knowledge)
     assert a == b and knowledge in a and "[x1, y1, x2, y2]" in a
@@ -180,6 +193,10 @@ def test_system_prompt_is_static_and_includes_knowledge(tmp_path):
     assert "Unser Kurs" in build_system_prompt(load_knowledge(custom))
     assert build_user_text(640, 480) == "Bildgröße: 640×480 Pixel."
     assert "Finde den Fehler" in build_user_text(640, 480, "  Finde den Fehler ")
+    with_ctx = build_user_text(640, 480, "", "  Der Kurs   schreibt heute  ")
+    assert with_ctx.endswith("Vorheriger Bildausschnitt (nur Themenkontext, nicht blind übernehmen): Der Kurs schreibt heute")
+    truncated = build_user_text(640, 480, "", "Wort " * 60)
+    assert truncated.endswith("…") and len(truncated.rsplit(": ", 1)[1]) <= MAX_CONTEXT_CHARS
 
 
 # ------------------------------------------------------------------------------------------ layout/render
@@ -197,12 +214,13 @@ def test_place_labels_avoid_overlaps_and_stay_inside():
 
 def test_label_lines_and_format():
     err = Mark(kind="error", box=(1, 2, 3, 4), text="Hans", intended="Haus", issue="Verbindung zu weit",
-               fix="eng anschließen", alternatives=["Hanse"], confidence=0.4)
+               fix="eng anschließen", alternatives=["Hanse"], confidence=0.4, strokes="h + a-hoch + s")
     lines = label_lines(err)
     assert lines[0].startswith("✗ Hans → Haus") and "40%" in lines[0]
     assert lines[1:] == ["Verbindung zu weit", "richtig: eng anschließen", "oder: Hanse"]
     assert label_lines(Mark(kind="word", text="und", confidence=0.9)) == ["und"]
-    assert format_mark(err).startswith("[1,2,3,4] ✗ Hans")
+    formatted = format_mark(err)
+    assert formatted.startswith("[1,2,3,4] ✗ Hans") and formatted.endswith("(h + a-hoch + s)")
 
 
 def test_render_annotated_draws_on_a_margin_canvas():

@@ -87,9 +87,12 @@ class StenoLiveApp(QObject):
             min_interval_s=settings.steno_min_interval_s, change_threshold=settings.steno_change_threshold,
             deep_after_s=settings.steno_deep_after_s if self.deep_auto else 0.0))
         self.hint = settings.steno_hint
+        self._last_deep_context: tuple[int, str] | None = None
         self.engine = LiveEngine(backend, self.stages, on_event=self.engine_event.emit,
                                  max_image_edge=settings.steno_max_image_edge,
-                                 max_image_tokens=settings.steno_max_image_tokens, hint_provider=lambda: self.hint)
+                                 max_image_tokens=settings.steno_max_image_tokens,
+                                 min_image_edge=settings.steno_min_image_edge,
+                                 hint_provider=lambda: self.hint, context_provider=self._context_for)
         self.engine_event.connect(self._on_event, Qt.ConnectionType.QueuedConnection)
 
         self.overlay = OverlayWindow()
@@ -231,6 +234,7 @@ class StenoLiveApp(QObject):
         self.excluded = exclude_from_capture(self.overlay)
         exclude_from_capture(self.panel)
         self._shown_frame, self._shown_stage = 0, ""
+        self._last_deep_context = None
         log.info("watching region %s on %s (capture exclusion: %s)", self.region, screen.name(), self.excluded)
         self._update_status()
 
@@ -331,6 +335,11 @@ class StenoLiveApp(QObject):
         elif kind == "cancelled":
             self._deep_progress.pop(fid, None)
 
+    def _context_for(self, _stage: str, frame_id: int) -> str:
+        """Reading from an earlier confirmed deep frame, never from the same frame."""
+        saved = self._last_deep_context
+        return saved[1] if saved is not None and saved[0] < frame_id else ""
+
     def _on_done(self, result: StenoResult) -> None:
         self._deep_progress.pop(result.frame_id, None)
         self.panel.show_result(result)
@@ -341,7 +350,14 @@ class StenoLiveApp(QObject):
                 self.set_live(False)
                 self._update_status(f"⚠ {result.error} – pausiert (▶ Live zum Fortsetzen)")
                 return
-        if not failed and result.frame_id >= self._shown_frame:
+        if not failed and result.stage == "deep":
+            reading = result.reading()
+            mean_conf = (sum(m.confidence for m in result.marks) / len(result.marks)) if result.marks else 0.0
+            if reading and mean_conf >= 0.55:
+                self._last_deep_context = (result.frame_id, reading)
+        downgrade = (result.frame_id == self._shown_frame
+                     and self._shown_stage == "deep" and result.stage == "fast")
+        if not failed and result.frame_id >= self._shown_frame and not downgrade:
             size = (result.image_width, result.image_height)
             self._show(result.frame_id, result.stage, result.marks, size, result.answer, headline(result))
         self._last_info = f"{STAGE_LABEL.get(result.stage, '')} {result.duration_s:.1f}s"

@@ -1,6 +1,7 @@
 package io.github.erikiss.steno.core
 
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.round
 
 /**
@@ -43,5 +44,25 @@ object ImageMath {
             if (fits(mid, max(round(mid / aspect).toInt(), 1))) lo = mid else hi = mid
         }
         return lo to max(round(lo / aspect).toInt(), 1)     // round = half to even, like Python's round()
+    }
+
+    /** Target size for the model: gently upscale very small crops (up to [maxUpscale]), then clamp to API limits. */
+    fun targetSize(
+        width: Int,
+        height: Int,
+        maxEdge: Int = STANDARD_MAX_EDGE,
+        maxTokens: Int = STANDARD_MAX_TOKENS,
+        minEdge: Int = 0,
+        maxUpscale: Double = 2.0,
+    ): Pair<Int, Int> {
+        var w = width
+        var h = height
+        val longEdge = max(w, h)
+        if (minEdge > 0 && longEdge in 1 until minEdge && maxUpscale > 1.0) {
+            val scale = min(maxUpscale, minEdge.toDouble() / longEdge)
+            w = max(1, round(w * scale).toInt())
+            h = max(1, round(h * scale).toInt())
+        }
+        return resizedSize(w, h, maxEdge, maxTokens)
     }
 }
