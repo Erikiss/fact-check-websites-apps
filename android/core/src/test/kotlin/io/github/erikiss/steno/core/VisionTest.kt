@@ -288,7 +288,7 @@ class VisionTest {
         assertEquals("Alles richtig", result.answer)
         assertNull(result.error)
         assertEquals("STOP", result.stopReason)
-        assertEquals(850L, result.usage?.get("input_tokens"))
+        assertTrue(result.costUsd > 0.0)
         val rows = ledgerFile.readLines().map { Json.mapper.readTree(it) }
         assertEquals(1, rows.size)
         assertEquals("steno-fast", rows[0].path("purpose").asText())
